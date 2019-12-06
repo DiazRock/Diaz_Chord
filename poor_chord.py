@@ -3,7 +3,7 @@ import zmq
 from time import sleep
 import sys
 import json
-
+import _thread as thread
 
 succ = None
 
@@ -26,16 +26,19 @@ class Node:
         self.start = lambda i : (self.id + 2**(i)) % 2**self.m         
         self.inside = lambda id, interval : id >= interval[0] and id < interval[1]
         self.belongs_to = lambda id, interval: self.inside(id, interval) if interval[0] < interval[1] else not self.inside(id, interval) 
-        self.commands = {"JOIN": self.init_parametters, "FIND_SUCC": self.find_succesor, "GET_SUCC": self.get_succ, "SET_SUCC": self.set_as_succ, "UPD_FING" : self.update_finger_table}   
+        self.commands = {"JOIN": self.init_parametters, "FIND_SUCC": self.find_succesor, "GET_SUCC": self.get_succ, "SET_SUCC": self.set_as_succ, "UPD_FING" : self.update_finger_table, "CLOSEST_PRED_FING": self.closest_pred_fing}   
         self.sock_req = self.context_sender.socket(zmq.REQ)
         if introduction_node:                    
             self.sock_req.connect("tcp://" + introduction_node)  #¿Qué pasa si el succ_node ya tiene un sucesor? Mejor dicho, si ya hay alguien para quien él es un sucesor.            
-            self.sock_req.send_json({"command": "JOIN", "params": {"addr_node": self.addr, "start_indexes": [self.start(i) for i in range(self.m) ]}})
+            self.sock_req.send_json({"command": "JOIN", "params": {"addr_node": self.addr, "start_indexes": [self.start(i) for i in range(self.m) ]}, "procedence" : "__init__"}) # Se supone que este recv se enganche con el recv_json de del waiting_for_command que se hace del lado del server.
             buff = self.sock_req.recv_json()            
             if buff['response'] == "ACK":
+                print(buff)
                 self.finger_table = buff['return_info']['finger_table']
                 self.predeccesor_id = buff['return_info']['pred_id']
                 self.predeccesor_addr = buff['return_info']['pred_addr']
+                self.succ_id = buff['return_info']['succ_id']
+                self.succ_addr = buff['return_info']['succ_addr']
                 self.update_others()
             
             
@@ -57,86 +60,101 @@ class Node:
     # AQUI HAY UN PROBLEMA SI EL NODO RECEPTOR FALLA. SI LA RESPUESTA NO LLEGA BIEN, HAY QUE REMITIR A OTRO NODO.
     # COMO MEDIDA A LO ANTERIOR, PUEDO NOTIFICAR AL SUCESOR DEL NODO RECEPTOR QUE ALGUIEN SE ESTA METIENDO EN LA RED, DE ESA FORMA EL OTRO LO PUEDE ATENDER EN CASO DE QUE LA RED CAIGA.   
     def init_parametters(self, addr_node, start_indexes):
+        
+        #print("init_parametters")
         return_json = {}
         finger_table = []
-        pred_addr, pred_id, succ_id, succ_addr = self.find_succesor(start_indexes[0])
-        finger_table.append((succ_id, succ_addr ))
-        print(pred_addr, pred_id, "  ", succ_id, succ_addr) 
-
-        
-        sock = self.context_sender.socket(zmq.REQ)
-        sock.connect("tcp://"+pred_addr)
-        sock.send_json( {"command": "SET_SUCC", "params": { "id_succ": self.id, "add_succ" : self.addr }})
-        buff = sock.recv_json()
-        sock.close()
+        pred_id, pred_addr, succ_id, succ_addr = self.find_succesor(start_indexes[0])
+        finger_table.append((succ_id, succ_addr ) )
+        #print(pred_id, pred_addr, "  ", succ_id, succ_addr, " en init_parametters") 
+                        
         for i in range(self.m-1):
+            #print(finger_table, " ", start_indexes)
             if(self.belongs_to(start_indexes[i + 1], interval =(self.id, finger_table[i][0]))):
-                finger_table[i + 1] = finger_table[i]
+                finger_table.append(finger_table[i]) 
             else:
-                finger_table[i + 1] = self.find_succesor(start_indexes[i + 1])[2:]                
+                finger_table.append(self.find_succesor(start_indexes[i + 1])[2:])                 
         
-        return_json.update({"response": "ACK" , "return_info": {"finger_table" : finger_table, "pred_id": pred_id, "pred_addr" : pred_addr  } })
-
+        
+        return_json.update({"response": "ACK" , "return_info": {"finger_table" : finger_table, "pred_id": pred_id, "pred_addr" : pred_addr, "succ_id" : self.id, "succ_addr": self.addr } })
+        
         self.sock_rep.send_json(return_json)
         
     def set_as_succ(self, id_succ, addr_succ):
         self.succ_id = id_succ
         self.succ_addr = addr_succ
-        self.sock_rep.send_json({"response": "ACK"})
+        self.sock_rep.send_json({"response": "ACK", "procedence": "set_as_succ"})
 
     
     def update_finger_table(self, new_node_addr, new_node_id, index_to_actualize):
-        if self.belongs_to(new_node_id, interval = (self.id, self.finger_table[index_to_actualize][1])):
+        #print("Antes de update ", self.id, " ", self.finger_table)
+
+        if self.belongs_to(new_node_id, interval = (self.id, self.finger_table[index_to_actualize][0])):
+            #print("Dentro de update", self.predeccesor_addr == self.addr, index_to_actualize, sep = ' ')
+            
+            
             self.finger_table[index_to_actualize] = (new_node_id, new_node_addr)
-            self.sock_req.connect("tcp://"+self.predeccesor_addr)
-            self.sock_req.send_json({"command" : "UPD_FING", "params": {"new_node_addr": new_node_addr, "new_node_id": new_node_id, "index_to_actualize": index_to_actualize}})
-            self.sock_req.disconnect("tcp://"+self.predeccesor_addr)
-        
+            # Estos son san parches puestos
+            if not index_to_actualize: self.succ_id, self.succ_addr = (new_node_id, new_node_addr)
+            if (self.predeccesor_addr, self.predeccesor_id) == (self.addr, self.id) : 
+                self.predeccesor_id, self.predeccesor_addr = (new_node_id, new_node_addr)
+            # fin de los parches
+            else:
+                
+                self.sock_req.connect("tcp://" + self.predeccesor_addr)
+                
+                self.sock_req.send_json({"command" : "CLOSEST_PRED_FING", "params": {"new_node_addr": new_node_addr, "new_node_id": new_node_id, "index_to_actualize": index_to_actualize }, "procedence": "update_finger_table" } )
+                self.sock_req.disconnect("tcp://"+self.predeccesor_addr)
+            print("en update_finger_table", self.addr, self.predeccesor_addr, sep = ' ')
 
 
     def get_succ(self):
-        self.sock_rep.send_json({"response": "ACK", "return_info": self.finger_table[0]})
+        print("GET_SUCC")
+        self.sock_rep.send_json( {"response": "ACK", "return_info": self.finger_table[0] } )
         
     # Este método es para los nodos que necesitan
     # ser actualizados a partir del nuevo que entró.    
     def update_others(self):
-        
-        for i in range(self.m):
-            pred_addr =  self.find_predecesor((self.id - 2**(i-1)))[1] 
+        #print("update_others client_side")
+        for i in range(1, self.m + 1):
+            pred_addr =  self.find_predecesor((self.id - 2**(i-1))%2**self.m)[1]
+            #print("en update_others, " + pred_addr, " ", (self.id - 2**(i-1))%2**self.m) 
             self.sock_req.connect("tcp://"+pred_addr)
-            self.sock_req.send_json({"command": "UPD_FING", "params": { "new_node_addr" : self.addr, "new_node_id" : self.id, "index_to_actualize" : i }})
+            self.sock_req.send_json({"command": "UPD_FING", "params": { "new_node_addr" : self.addr, "new_node_id" : self.id, "index_to_actualize" : i -1 }})
 
         
-
+    #MANTRA : "Do not use or close sockets except in the thread that created them."
     def waiting_for_command(self):
         self.sock_rep = self.context_sender.socket(zmq.REP)
         self.sock_rep.bind("tcp://" + self.addr)    
-        print(self.id, " ", self.addr, "\n", self.finger_table,  "\n", self.predeccesor_id, " ", self.predeccesor_addr, "\n", self.succ_id, " ", self.succ_addr) 
+        #print(self.id, " ", self.addr, "\n", self.finger_table,  "\n", self.predeccesor_id, " ", self.predeccesor_addr, "\n", self.succ_id, " ", self.succ_addr) 
 
-        while True:
-            #print("59: waiting")
+        while True:            
+            
+            print("waiting")
             buff = self.sock_rep.recv_json()
-            print("buff: ", buff)
-            
-            
+                                    
             if buff['command'] in self.commands:
-                
-                print(buff['command'])
-                self.commands[buff['command']](**buff['params'])
-                
 
-    #Si voy a pasar una propiedad, necesito el objeto en sí, porque siempre pueden
-    #existir supuestas modificaciones.
+                print("jejejejejejejejejejejejej ", buff)
+                
+                
+                self.commands[buff["command"]](**buff["params"])
+                                
     
-    def find_succesor(self, id):    
+    def find_succesor(self, id):
+            
         (predeccesor_id, predeccesor_addr)  = self.find_predecesor(id)
-        print(predeccesor_addr, self.addr)                
-        self.sock_req.connect("tcp://"+predeccesor_addr)
-        self.sock_req.send_json({"command" : "GET_SUCC", "params": None})
+        to_return = (predeccesor_id, predeccesor_addr)
+        if predeccesor_addr != self.addr:
+            
+            
+            self.sock_req.connect("tcp://"+ predeccesor_addr)
+            self.sock_req.send_json({"command" : "GET_SUCC", "params": None})
 
-        print("ACA")
-        to_return = self.sock_req.recv_json()["return_info"]
-        self.sock_req.disconnect("tcp://"+predeccesor_addr)        
+            print("ACA find_succesor")
+            to_return = self.sock_req.recv_json()["return_info"]
+            self.sock_req.disconnect("tcp://"+ predeccesor_addr)        
         return (predeccesor_id, predeccesor_addr) + to_return
         
 
@@ -152,12 +170,13 @@ class Node:
             self.sock_req.send_json({"command": "CLOSEST_PRED_FING", "params": { "id": id, "addr_to_rep": self.addr }})
             predecesor_id, predecesor_addr = self.sock_req.recv_json()['return_info']
             self.sock_req.disconnect("tcp://"+predecesor_addr)
+            print("Es probable que este while esté dando el berro.")
             
 
-        print("por acá pasé")
+        print("por acá pasé_find_predeccesor_out_while")
         return (predecesor_id,predecesor_addr)
 
-    def closesr_pred_fing(self, id, addr_to_rep):
+    def closest_pred_fing(self, id, addr_to_rep):
                 
         for i in range(self.m-1, 0, -1):
             if self.belongs_to(self.finger_table[i][0], (self.id, id)) :
