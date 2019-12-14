@@ -155,7 +155,7 @@ class Node:
             self.finger_table[index_to_actualize] = (new_node_id, new_node_addr)
             #if new_node_id == 3:
                 #print("\tUn chino cayó en un pozo.")
-            print("\tpredeccesor_addr:\t", self.predeccesor_addr)
+            print("\tpredeccesor_addr:\t", self.predeccesor_addr, ' ', addr_requester)
             # Estos son san parches puestos
             #if not index_to_actualize: self.succ_id, self.succ_addr = (new_node_id, new_node_addr)
             #if (self.predeccesor_addr, self.predeccesor_id) == (self.addr, self.id) : 
@@ -165,7 +165,7 @@ class Node:
             if self.predeccesor_addr != addr_requester:
                 print("UPD_FING ", "id:", self.id, "predeccesor_id:", self.predeccesor_id, "predeccesor_addr:", self.predeccesor_addr, "addr:", self.addr, sep = ' ')
                 self.sock_req.connect("tcp://" + self.predeccesor_addr)                    
-                self.sock_req.send_json({"command" : "UPD_FING", "params": {"new_node_addr": new_node_addr, "new_node_id": new_node_id, "index_to_actualize": index_to_actualize, "addr_requester": self.addr }, "procedence": "update_finger_table" } )
+                self.sock_req.send_json({"command" : "UPD_FING", "params": {"new_node_addr": new_node_addr, "new_node_id": new_node_id, "index_to_actualize": index_to_actualize, "addr_requester": addr_requester }, "procedence": "update_finger_table" } )
                 self.sock_req.recv_json()
                 self.sock_req.disconnect("tcp://"+self.predeccesor_addr)
             #print("en update_finger_table", self.addr, self.predeccesor_addr, sep = ' ')
@@ -183,7 +183,7 @@ class Node:
     def update_others(self):
         print("update_others client_side")
         for i in range( 1, self.m + 1):
-            #print("update_others ", (self.id - 2**(i-1))%2**self.m)            
+            print("update_others ", (self.id - 2**(i-1))%2**self.m)            
             pred_addr =  self.find_predecesor((self.id - 2**(i-1))% 2**self.m)[1]
             if pred_addr == self.addr: continue     #Este if está aquí porque uno se puede tener en su finger_table. Sobre todo cuando halla m o menos nodos en la red.
             print("en update_others, ", (self.id, self.addr , pred_addr), " ", (self.id - 2**(i-1))%2**self.m) 
@@ -214,7 +214,6 @@ class Node:
         
         (predeccesor_id, predeccesor_addr)  = self.find_predecesor(id)        
         
-
         print("\tfind_succ ", (predeccesor_addr, self.addr))        
         if predeccesor_addr != self.addr:
                         
@@ -234,11 +233,11 @@ class Node:
         
     #En la manere en que pregunto el predecesor evito tener que forgardear un mensaje demasiadas veces.
     def find_predecesor(self, id):
-        #print("find_predecesor")
+        print("find_predecesor")
         current_id = self.id
         current_succ_id = self.finger_table[0][0]
         current_addr = self.addr  #se supone que sea la direccin del nodo al que le pido el closest pred fing, en la primea iter no lo necesito.
-        while not self.belongs_to(id, interval = (current_id, current_succ_id)) and id != current_succ_id:
+        while not self.belongs_to(id, interval = (current_id, current_succ_id)) :
             if current_id != self.id:
                 self.sock_req.connect("tcp://" + current_addr)
                 self.sock_req.send_json({"command": "CLOSEST_PRED_FING", "params": { "id": id, "is_a_request": True }})
@@ -247,21 +246,26 @@ class Node:
                 current_id, current_addr = buff['return_info']
             else:
                 current_id, current_addr = self.closest_pred_fing(id)
-            self.sock_req.connect("tcp://" + current_addr)
-            self.sock_req.send_json({"command": "GET_SUCC", "params": {}})
-            buff = self.sock_req.recv_json()
-            self.sock_req.disconnect("tcp://" + current_addr)
-            current_succ_id = buff['return_info'][0]
-            print("outside the while ", id, current_id, current_succ_id)
+            print("inside the while ", id, current_id, current_succ_id, current_addr)
+            if current_addr != self.addr:
+                self.sock_req.connect("tcp://" + current_addr)
+                self.sock_req.send_json({"command": "GET_SUCC", "params": {}})
+                buff = self.sock_req.recv_json()
+                self.sock_req.disconnect("tcp://" + current_addr)
+                current_succ_id, current_succ_addr = buff['return_info']
+            else:
+                current_succ_id, current_succ_addr = self.finger_table[0]
+            if current_succ_id == id: 
+                return (current_succ_id, current_succ_addr)
             
-        print(id == current_succ_id)            
+        #print(id == current_succ_id)            
         return current_id, current_addr
 
     def closest_pred_fing(self, id, is_a_request = False):        
-        #print("\t", self.id, id, 'en closest_pred_fing', sep = ' ')
+        print("\t", self.id, id, 'en closest_pred_fing', sep = ' ')
 
         for i in range(self.m-1, -1, -1):
-            #print("\t", self.finger_table[i], "\t", (self.id, id))
+            print("\t", self.finger_table[i], "\t", (self.id, id))
             if self.finger_table[i][0] == self.id : continue
             if self.belongs_to(self.finger_table[i][0], (self.id, id)) :
                 #print("ME moriiiiiiii ", is_a_request)
