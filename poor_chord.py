@@ -133,6 +133,8 @@ class Node:
         if prop_name == "start_indexes":
             self.sock_rep.send_json({'response': "ACK", "return_info" : [self.start(i) for i in range(self.m)] })    
 
+        self.sock_rep.send_json({'response': 'ACK', "response": self.__dict__[prop_name] })
+
     def set_as_succ(self, id_succ, addr_succ):
         self.succ_id = id_succ
         self.succ_addr = addr_succ
@@ -189,7 +191,7 @@ class Node:
             self.sock_req.send_json({"command": "UPD_FING", "params": { "new_node_addr" : self.addr, "new_node_id" : self.id, "index_to_actualize" : i -1, "addr_requester": self.addr }, "procedence": (self.addr, "update_others")})
             self.sock_req.recv_json()
             self.sock_req.disconnect("tcp://" + pred_addr)
-            print("No puedo creer que haya muerto")
+            #print("No puedo creer que haya muerto")
         
     #MANTRA : "Do not use or close sockets except in the thread that created them."
     def waiting_for_command(self):
@@ -230,51 +232,36 @@ class Node:
 
         return (predeccesor_id, predeccesor_addr) + to_return
         
+    #En la manere en que pregunto el predecesor evito tener que forgardear un mensaje demasiadas veces.
     def find_predecesor(self, id):
-        predecesor_addr = self.addr
-        predecesor_id = self.id
-        if id == self.finger_table[0][0]: return (predecesor_id, predecesor_addr)
-        print("buscando predecesor antes del while ", id, (self.start (predecesor_id), self.start(self.finger_table[0][0])), sep = ' ')
-        print(id, " ", predecesor_id, " ", self.finger_table[0])
-        print(self.belongs_to(id, (predecesor_id, self.finger_table[0][0])), sep = ' ')
-        succ_id = self.finger_table[0][0]
-        i = 0
-        while not self.belongs_to(id, (predecesor_id, succ_id)):
-            
-            #print("outside the if ", id, predecesor_id, succ_id, sep = ' ')
-            if predecesor_addr != self.addr:
-                self.sock_req.connect("tcp://"+predecesor_addr)
-                #print("inside the if!")                
-                self.sock_req.send_json({"command": "CLOSEST_PRED_FING", "params": { "id": id, "is_a_request": True }, "procedence" : self.addr})
+        #print("find_predecesor")
+        current_id = self.id
+        current_succ_id = self.finger_table[0][0]
+        current_addr = self.addr  #se supone que sea la direccin del nodo al que le pido el closest pred fing, en la primea iter no lo necesito.
+        while not self.belongs_to(id, interval = (current_id, current_succ_id)) and id != current_succ_id:
+            if current_id != self.id:
+                self.sock_req.connect("tcp://" + current_addr)
+                self.sock_req.send_json({"command": "CLOSEST_PRED_FING", "params": { "id": id, "is_a_request": True }})
                 buff = self.sock_req.recv_json()
-                #print(buff)
-                self.sock_req.disconnect("tcp://"+predecesor_addr)
-                predecesor_id, predecesor_addr = buff['return_info']
-                #print((id, self.start(predecesor_id) , self.start(self.finger_table[0][0]) , predecesor_addr))        
-                ###print("Es probable que este while esté dando el berro.")
-                
+                self.sock_req.disconnect("tcp://" + current_addr)
+                current_id, current_addr = buff['return_info']
             else:
-                predecesor_id, predecesor_addr = self.closest_pred_fing(id = id)
-                                        
-            self.sock_req.connect("tcp://"+predecesor_addr)
-            self.sock_req.send_json({"command": "GET_SUCC", "params" : {}, "procedence": self.addr})
+                current_id, current_addr = self.closest_pred_fing(id)
+            self.sock_req.connect("tcp://" + current_addr)
+            self.sock_req.send_json({"command": "GET_SUCC", "params": {}})
             buff = self.sock_req.recv_json()
-            succ_id = buff['return_info'][0]
-            self.sock_req.disconnect("tcp://"+predecesor_addr)
-            if i <= 2:
-                print(buff)
-                print("127.0.0.1:8080 BELONG id {0} interval ({1},{2}) : {3}".format(id, predecesor_id, succ_id, self.belongs_to(id, (predecesor_id, succ_id))) )
-            #print("find_predecesor ", (id, predecesor_id, succ_id, predecesor_addr))
-            i+=1
-        #print('después del while', predecesor_id, predecesor_addr, sep='\t')
-        #print("por acá pasé_find_predeccesor_out_while")
-        return (predecesor_id,predecesor_addr)
+            self.sock_req.disconnect("tcp://" + current_addr)
+            current_succ_id = buff['return_info'][0]
+            print("outside the while ", id, current_id, current_succ_id)
+            
+        print(id == current_succ_id)            
+        return current_id, current_addr
 
     def closest_pred_fing(self, id, is_a_request = False):        
-        print("\t", self.id, id, 'en closest_pred_fing', sep = ' ')
+        #print("\t", self.id, id, 'en closest_pred_fing', sep = ' ')
 
         for i in range(self.m-1, -1, -1):
-            print("\t", self.finger_table[i], "\t", (self.id, id))
+            #print("\t", self.finger_table[i], "\t", (self.id, id))
             if self.finger_table[i][0] == self.id : continue
             if self.belongs_to(self.finger_table[i][0], (self.id, id)) :
                 #print("ME moriiiiiiii ", is_a_request)
