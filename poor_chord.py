@@ -17,7 +17,7 @@ AHORA NECESITO QUE CADA REQUEST TENGA EN CUENTA QUE PUEDE FALLAR (PINGA....... :
 '''
 
 class request:
-    def __init__(self, command_name, method_params, procedence_addr, destination_addr, destination_id, context, error_json = {"response": "ERR"},  request_timeout = 1e3, request_retries = 3):
+    def __init__(self, command_name, method_params, procedence_addr, destination_addr, destination_id, context, error_json = {"response": "ERR"},  request_timeout = 6e3, request_retries = 3):
         self.command_name = command_name
         self.method_params = method_params
         self.procedence_addr = procedence_addr
@@ -29,46 +29,39 @@ class request:
         self.destination_id = destination_id
 
     
-    def make_request(self):
-        if self.procedence_addr == self.destination_addr:
-            if type(self) is property_request:
-                return {"response": "ACK", "procedence": self.procedence_addr, "return_info": (self.__dict__[self.asked_property])}
-            if type(self) is wrapper_request:
-                return {"response": "ACK", "procedence": self.procedence_addr, "return_info": (self.__dict__[self.method_for_wrap](self.method_params) ) }
-
+    def make_request(self):        
         #print("Entre a make request")
-        poll = zmq.Poller()
+        #poll = zmq.Poller()
         for i in range(self.request_retries, 0, -1):
             
             sock_req = self.context.socket(zmq.REQ)
-            sock_req.connect("tcp://" + self.destination_addr)
-            poll.register(sock_req, zmq.POLLIN)
+            sock_req.connect("tcp://" + self.destination_addr)            
+            json_to_send = {"command": self.command_name, "params": self.method_params, "procedence": self.procedence_addr}
+            #if self.command_name == "RECT": json_to_send.update({"cosa": "ppppppp"})
+            sock_req.send_json(json_to_send)            
+            
+            #if sock_req.poll():
+                #print("\tEntré al if en make_request()")            
+            recv = sock_req.recv_json()                
+            sock_req.disconnect("tcp://" + self.destination_addr) 
+            return recv
 
-            sock_req.send_json({"command": self.command_name, "params": self.method_params, "procedence": self.procedence_addr})
-            socks = dict(poll.poll(self.request_timeout ) )                        
-            #print(sock_req)
-            if socks:
-                if socks[sock_req] == zmq.POLLIN:
-                    recv = sock_req.recv_json()
-                    if recv:
-                        sock_req.disconnect("tcp://" + self.destination_addr) 
-                        return recv
-            else:
-                print("Retrying to connect, time: ", (self.request_retries - i) + 1)
-                sock_req.setsockopt(zmq.LINGER, 0)
-                sock_req.disconnect("tcp://" + self.destination_addr)
-                sock_req.close()
-                poll.unregister(sock_req)
+            #else:
+            print("Retrying to connect, time: ", (self.request_retries - i) + 1)
+            print("I'm trying to send %s " %json_to_send)
+            sock_req.setsockopt(zmq.LINGER, 0)
+            sock_req.disconnect("tcp://" + self.destination_addr)
+            sock_req.close()                
 
         return self.error_json
 
     def action_for_error(self):
         print("In here I'm going to write a function over the death of destination_node")
         print('Remember: %s is dead, you need to make some work to fix the death in the ring' %self.destination_addr)
-        pass        
+        
         
 class initial_request(request):
-    def __init__(self, command_name, method_params, procedence_addr, destination_addr, destination_id, context, request_timeout = 1e3, request_retries = 3):        
+    def __init__(self, command_name, method_params, procedence_addr, destination_addr, destination_id, context, request_timeout = 4e3, request_retries = 3):        
         super().__init__(command_name = command_name, method_params = method_params, procedence_addr = procedence_addr, destination_addr = destination_addr, destination_id = destination_id, error_json = {"response": "ERR", "return_info": "cannot connect to %s, something went wrong" % procedence_addr, "action": self.action_for_error}, context = context, request_timeout = request_timeout, request_retries= request_retries)
 
     def action_for_error(self):
@@ -80,17 +73,21 @@ class initial_request(request):
         return self.make_request()
         
 
-class property_request(request):
-    def __init__(self, command_name, method_params, procedence_addr, destination_addr, destination_id, asked_property, context, request_timeout = 1e3, request_retries = 3):
-        super().__init__(command_name = command_name, method_params = method_params, procedence_addr = procedence_addr, destination_addr = destination_addr, destination_id = destination_id, context = context, error_json = {"response": "ERR", "return_info": "cannot connect to %s, something went wrong" % procedence_addr, "action": self.action_for_error}, request_timeout = request_timeout, request_retries= request_retries)
-        self.asked_property = asked_property
+class property_request(request):    
+    def make_request(self, requester_obj, asked_properties):
+        if self.procedence_addr == self.destination_addr:
+            return {"response": "ACK", "procedence": self.procedence_addr, "return_info": {asked_property: requester_obj.__dict__[asked_property] for asked_property in asked_properties } }
+        return super().make_request()
         
 
+
 class wrapper_request(request):
-    def __init__(self, command_name, method_params, procedence_addr, destination_addr, destination_id, method_for_wrap, context, request_timeout = 1e3, request_retries = 3 ):
-        super().__init__(command_name = command_name, method_params = method_params, procedence_addr = procedence_addr, destination_addr = destination_addr, destination_id = destination_id, error_json = {"response": "ERR", "return_info": "cannot connect to %s, something went wrong" % procedence_addr, "action": self.action_for_error}, context = context, request_timeout = request_timeout, request_retries= request_retries)
-        self.method_for_wrap = method_for_wrap
-    
+    def make_request(self, requester_obj, method_for_wrap):
+        if self.procedence_addr == self.destination_addr:
+            return {"response": "ACK", "procedence": self.procedence_addr, "return_info": method_for_wrap(**self.method_params) }
+        return super().make_request()
+        
+        
 
 # Una solucion para que cuando un nodo muera no puede ser tener dentro de él
 # la info de quién lo tiene como referencia, porque si el tipo se muere, cómo
@@ -112,6 +109,7 @@ class Node:
         self.start = lambda i : (self.id + 2**(i)) % 2**self.m
         self.finger_table = []
         self.waiting_time = 10
+        
         #self.inside = lambda id, interval : id >= interval[0] and id < interval[1]
         #Esto está mal, porque no mide bien la pertenencia al intervalo si este cle da la vuelta al círculo.
         #self.belongs_to = lambda id, interval: self.inside(id, interval) if interval[0] < interval[1] else not self.inside(id, interval)
@@ -162,7 +160,7 @@ class Node:
             self.isPrincipal = True
             
         #print(self.finger_table)
-        self.waiting_for_command()
+        self.action_wrapper()
 
 
     def stabilize(self):
@@ -194,16 +192,17 @@ class Node:
         pass
 
 
-    def rectify(self, predecessor_id, predecessor_addr):
-        if self.belongs_to(predecessor_id, interval = (self.predeccesor_id, self.id)) or self.id == self.predeccesor_id:
-            self.predeccesor_id, self.predeccesor_addr = predecessor_id, predecessor_addr
+    def rectify(self, predeccesor_id, predeccesor_addr):
+        #print("rectify")
+        if self.belongs_to(predeccesor_id, interval = (self.predeccesor_id, self.id)) or self.id == self.predeccesor_id:
+            self.predeccesor_id, self.predeccesor_addr = predeccesor_id, predeccesor_addr
         else:
             alive_pred_request = request(command_name = "ALIVE", method_params = {}, procedence_addr = self.addr, destination_id = self.predeccesor_id, destination_addr = self.predeccesor_addr, context = self.context_sender)
             recv_json_alive = alive_pred_request.make_request()
             if recv_json_alive is alive_pred_request.error_json:
-               self.predeccesor_id, self.predeccesor_addr = predecessor_id, predecessor_addr 
+               self.predeccesor_id, self.predeccesor_addr = predeccesor_id, predeccesor_addr 
             else:
-                alive_pred_request.action_for_error()    
+                alive_pred_request.action_for_error()
         
 
     def answer_to_join(self):        
@@ -226,13 +225,15 @@ class Node:
     def execute_join(self, introduction_node, introduction_id, id_to_found_pred):
         
         print("execute_join before find_predecessor")        
-        find_pred_request = wrapper_request (command_name = "FIND_PRED", method_params = {"id" : id_to_found_pred}, procedence_addr = self.addr, destination_addr = introduction_node, destination_id = introduction_id, method_for_wrap = "find_predecesor", context = self.context_sender )        
-        recv_json = find_pred_request.make_request()
+        find_pred_request = wrapper_request (command_name = "FIND_PRED", method_params = {"id" : id_to_found_pred}, procedence_addr = self.addr, destination_addr = introduction_node, destination_id = introduction_id, context = self.context_sender )        
+        recv_json = find_pred_request.make_request(requester_obj = self, method_for_wrap = "find_predecesor")
         if recv_json["response"] == "ERR":
             return recv_json
+        print("Pasé el find_pred ", recv_json)
         self.predeccesor_id, self.predeccesor_addr = recv_json['return_info']['pred_id'], recv_json['return_info']['pred_addr']
-        get_succ_list_request = property_request(command_name = "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_addr = introduction_node, destination_id = introduction_id, asked_property = "succ_list", context = self.context_sender) 
-        recv_json = get_succ_list_request.make_request()
+        get_succ_list_request = property_request(command_name = "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_addr = introduction_node, destination_id = introduction_id, context = self.context_sender) 
+        recv_json = get_succ_list_request.make_request(requester_obj = self, asked_properties = "succ_list")
+
         if recv_json["response"] == "ERR":
             return recv_json
         self.succ_list = recv_json['return_info']['succ_list']
@@ -304,7 +305,7 @@ class Node:
         if prop_name == "start_indexes":
             self.sock_rep.send_json({'response': "ACK", "return_info" : [self.start(i) for i in range(self.m)] })    
 
-        self.sock_rep.send_json({'response': 'ACK', "response": self.__dict__[prop_name] })
+        self.sock_rep.send_json({'response': 'ACK', "return_info": self.__dict__[prop_name] })
 
     def set_as_succ(self, id_succ, addr_succ):        
         self.finger_table[0] = (id_succ, addr_succ)
@@ -376,31 +377,37 @@ class Node:
     def action_wrapper(self):
         countdown = time()
         self.is_waiting = False        
-        sleep(self.waiting_time)
-
+        if self.id != self.predeccesor_id: sleep(self.waiting_time)
+        print("I entered to the action_wrapper")
         while True:
-            if abs (countdown - time() ) > self.waiting_time:
+            
+            if abs (countdown - time() ) > self.waiting_time:                
+                print("action_wrapper while")
                 countdown = time()
                 if self.predeccesor_addr == self.addr: continue
                 #stabilize from succesor.
-                succ_pred_request = property_request(command_name = "GET_PRED", method_params = {}, procedence_addr = self.addr, destination_addr = self.succ_list[0][1], context = self.context_sender, destination_id = self.succ_list[0][0], asked_property = 'predeccesor_addr')
-                recv_json_pred = succ_pred_request.make_request()
+                succ_pred_request = property_request(command_name = "GET_PRED", method_params = {}, procedence_addr = self.addr, destination_addr = self.succ_list[0][1], context = self.context_sender, destination_id = self.succ_list[0][0])
+                recv_json_pred = succ_pred_request.make_request(requester_obj = self,  asked_properties = ('predeccesor_id', 'predeccesor_addr'))
+                #print(recv_json_pred)
                 while recv_json_pred is succ_pred_request.error_json and self.succ_list:
                     self.succ_list.pop(0)
                     succ_pred_request.destination_id, succ_pred_request.destination_addr = self.succ_list[0]
-                    recv_json_pred = succ_pred_request.make_request()
-                succ_list_request = property_request(command_name = "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_addr = self.succ_list[0][1], destination_id = self.succ_list[0][0], asked_property = "succ_list", context = self.context_sender )
-                recv_json_succ_list = succ_list_request.make_request()
-                self.succ_list = self.succ_list[0] + recv_json_succ_list['return_info']["succ_list"][:-1]
-                if self.belongs_to(recv_json_pred['return_info']['predecessor_id'], interval = (self.id, self.succ_list[0][0])):
-                    pred_succ_list_request = property_request(command_name = "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_id = recv_json_pred['return_info']['predecessor_id'], destination_addr = recv_json_pred['return_info'][ 'predeccesor_addr'], context = self.context_sender, asked_property = 'succ_list')
-                    recv_json_pred_succ_list = pred_succ_list_request.make_request()
+                    recv_json_pred = succ_pred_request.make_request(requester_obj = self,  asked_properties = ('predeccesor_id', 'predeccesor_addr'))
+                succ_list_request = property_request(command_name = "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_addr = self.succ_list[0][1], destination_id = self.succ_list[0][0], context = self.context_sender )
+                recv_json_succ_list = succ_list_request.make_request(requester_obj = self, asked_properties = ("succ_list",))
+                #print(recv_json_succ_list)
+                print("recv_json_succ_list ", recv_json_succ_list)
+                self.succ_list =  [self.succ_list[0]] + recv_json_succ_list['return_info']["succ_list"][:-1]
+                if self.belongs_to(recv_json_pred['return_info']['predeccesor_id'], interval = (self.id, self.succ_list[0][0])):
+                    pred_succ_list_request = property_request(command_name = "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_id = recv_json_pred['return_info']['predeccesor_id'], destination_addr = recv_json_pred['return_info'][ 'predeccesor_addr'], context = self.context_sender)
+                    recv_json_pred_succ_list = pred_succ_list_request.make_request(requester_obj = self, asked_properties = ('succ_list',) )
                     if not recv_json_pred_succ_list is pred_succ_list_request.error_json:
-                        self.succ_list = (recv_json_pred['return_info']['predecessor_id'], recv_json_pred['return_info']['predecessor_addr']) + recv_json_pred_succ_list['return_info']['succ_list'][:-1]
+                        self.succ_list = [[recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']]] + recv_json_pred_succ_list['return_info']['succ_list'][:-1]
                     
                     else:
                         pred_succ_list_request.action_for_error()
-                rectify_request = request(command_name= "RECT", method_params = { "predecessor_id": self.id, "predecessor_addr" : self.addr }, procedence_addr = self.addr, destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1], context = self.context_sender)
+                print("How many more times I send to rectify the succesor. succ_list ", self.succ_list)
+                rectify_request = request(command_name = "RECT", method_params = { "predeccesor_id": self.id, "predeccesor_addr" : self.addr }, procedence_addr = self.addr, destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1], context = self.context_sender)
                 rectify_request.make_request()
 
                 # The STAB request ask for the current succesor it's predecessor. It could posible that succesor.predecessor be diferent of the node. This needs to be actualize. 
@@ -408,8 +415,11 @@ class Node:
                 
                 
             if not self.is_waiting:
+                self.is_waiting = True
                 thr = threading.Thread(target= self.waiting_for_command)
                 thr.start()
+                
+            
 
     
     def waiting_for_command(self):
@@ -417,16 +427,19 @@ class Node:
         self.sock_rep = self.context_sender.socket(zmq.REP)
         self.sock_rep.bind("tcp://" + self.addr)    
         ###print(self.id, " ", self.addr, "\n", self.finger_table,  "\n", self.predeccesor_id, " ", self.predeccesor_addr, "\n", self.succ_id, " ", self.succ_addr)    
-        while True:
+        #while True:
+        
+        print("\trecieving")
+        buff = self.sock_rep.recv_json()
+        #print("después del recv ", self.is_waiting)                                
+        if buff['command'] in self.commands:
+            #if buff['command'] != "CLOSEST_PRED_FING":
+            print(buff)
+            if buff['command'] == "RECT": sleep(1)
+            
+            self.commands[buff["command"]](**buff["params"])
 
-            buff = self.sock_rep.recv_json()
-                                    
-            if buff['command'] in self.commands:
-                #if buff['command'] != "CLOSEST_PRED_FING":                
-                print(buff)
-                
-                self.commands[buff["command"]](**buff["params"])
-
+        self.is_waiting = False
         self.sock_rep.close()        
 
 
@@ -480,8 +493,8 @@ class Node:
          
         while not self.belongs_to(id, interval = (current_id, current_succ_id)) and current_id != current_succ_id :
             print('por aca')    
-            closest_pred_fing_req = wrapper_request(command_name = "CLOSEST_PRED_FING", method_params = {"id": id}, procedence_addr = self.addr, destination_addr = current_addr, destination_id = current_id, context = self.context_sender, method_for_wrap = "closest_pred_fing")
-            recv_json_closest = closest_pred_fing_req.make_request()
+            closest_pred_fing_req = wrapper_request(command_name = "CLOSEST_PRED_FING", method_params = {"id": id}, procedence_addr = self.addr, destination_addr = current_addr, destination_id = current_id, context = self.context_sender)
+            recv_json_closest = closest_pred_fing_req.make_request(requester_obj = self, method_for_wrap = "closest_pred_fing")
             if recv_json_closest is closest_pred_fing_req.error_json:
                 #Aquí hay que hacer un action error que elimine toda referencia a current_addr en el anillo.
                 closest_pred_fing_req.action_for_error()
@@ -499,8 +512,8 @@ class Node:
             #    print("inside the while ", id, current_id, current_succ_id, current_addr)
             #SI PEDIR EL SUCESOR DE CURRENT_SUCC FALLA, SIGNIFICA QUE CURRENT_SUCC ESTA MUERTO, EN CUYO CASO HAY QUE BUSCAR OTRO SUCC DE LA LISTA DE CURRENT
 
-            succ_list_request = property_request(command_name= "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_addr = recv_json_closest['return_info']['closest_addr'], destination_id = recv_json_closest['return_info']['closest_id'], context = self.context_sender, asked_property = "succ_list")
-            recv_json_succ = succ_list_request.make_request()
+            succ_list_request = property_request(command_name= "GET_SUCC_LIST", method_params = {}, procedence_addr = self.addr, destination_addr = recv_json_closest['return_info']['closest_addr'], destination_id = recv_json_closest['return_info']['closest_id'], context = self.context_sender)
+            recv_json_succ = succ_list_request.make_request(requester_obj = self, asked_properties = "succ_list")
             if recv_json_succ is succ_list_request.error_json:
                 succ_list_request.action_for_error()
                 continue
