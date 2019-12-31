@@ -94,12 +94,13 @@ class Node:
             self.isPrincipal = True
             
         #print(self.finger_table)
-        self.waiting_for_command()
+        self.wrapper_action()
 
 
     def stabilize(self):
         print("I enter to stabilize")
         if self.predeccesor_addr == self.addr: return
+        #print("pasé del if de stabilize")
         #stabilize from succesor.
         succ_pred_request = property_request(json_to_send = {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr}, destination_addr = self.succ_list[0][1], context = self.context_sender, destination_id = self.succ_list[0][0])
         recv_json_pred = succ_pred_request.make_request(requester_obj = self,  asked_properties = ('predeccesor_id', 'predeccesor_addr'))
@@ -187,7 +188,7 @@ class Node:
     def execute_join(self, introduction_node, introduction_id, id_to_found_pred):
         
         print("execute_join before find_predecessor")        
-        find_pred_request = wrapper_request ( json_to_send = {"command_name" : "FIND_PRED", "method_params" : {"id" : id_to_found_pred}, "procedence_addr" : self.addr}, destination_addr = introduction_node, destination_id = introduction_id, context = self.context_sender )        
+        find_pred_request = wrapper_request ( json_to_send = {"command_name" : "FIND_PRED", "method_params" : {"id" : id_to_found_pred}, "procedence_addr" : self.addr}, destination_addr = introduction_node, destination_id = introduction_id, context = self.context_sender )
         recv_json = find_pred_request.make_request(requester_obj = self, method_for_wrap = "find_predecesor")
         if recv_json["response"] == "ERR":
             return recv_json
@@ -199,8 +200,8 @@ class Node:
         if recv_json["response"] == "ERR":
             return recv_json
         self.succ_list = recv_json['return_info']['succ_list']
-
         
+        print("JOIN SUCCESS!!!")
         #succ_list_request = property_request(command_name = "GET_SUCC", method_params = {}, procedence_addr = self.addr)
         
         #if self.is_introduction_node:
@@ -338,32 +339,51 @@ class Node:
     # 
 
 
+
+    #Razón por la que hace falta un hilo. Supongamos que tenemos un nodo en rol de cliente haciendo join, 
+    # que es un conjunto de requests, 
+    # a un nodo s haciendo rol de server (el que lo recibe en la red). 
+    # Digamos que cada paso del join puede demorarse más del waiting_time asingado
+    # para activar el stabilize. Esto significa que entre un paso y otro del join 
+    # yo mando a hacer s.stabilize, por lo cual el nodo s está ocupado para el próximo
+    # request del join. Ahora, ¿qué pasa, si el stabilize demora tanto, que el nodo cliente
+    # no recibe una respuesta en el tiempo necesario y considera al nodo s muerto, cuando en
+    # realidad no lo está? Pues que estamos en presencia de un comportamiento inesperado.
+    # Es por ello que necesitamos un hilo. Para que la capacidad de respuesta del nodo s
+    # no se vea interrumpida.
+    
+    def wrapper_action(self):
+        self.stabilize()        
+        thr_stabilize = threading.Thread(target = self.wrapper_loop_stabilize, args =() )
+        thr_stabilize.start()        
+        self.waiting_for_command()
+        
+
+    def wrapper_loop_stabilize(self):
+        countdown = time()
+        while True:
+            if abs (countdown - time()) > self.waiting_time:
+                countdown = time()
+                self.stabilize()
+        
+
     def waiting_for_command(self):
         
         self.sock_rep = self.context_sender.socket(zmq.REP)
         self.sock_rep.bind("tcp://" + self.addr)    
         ###print(self.id, " ", self.addr, "\n", self.finger_table,  "\n", self.predeccesor_id, " ", self.predeccesor_addr, "\n", self.succ_id, " ", self.succ_addr)    
-        #A los 10 segundos yo debo insertar un stabilize en la cola, pero el stabilize debe tener menos prioridad que los comandos que lleguen 
-        #la solución es personalizar los comandos para que si todos pertenecen a una secuencia específica (como execute join a algo así)
-        #Guardar todas las acciones en una cola y con la información obtenida
-        self.stabilize()
-        recieved_success_req = False
-        countdown = time()
+        
         print ("waiting")
         while True:
             
-            #while abs(countdown - time()) < self.waiting_time:
-            if recieved_success_req and abs (countdown - time) > self.waiting_time : 
-                countdown = time()
-                self.stabilize()
-
+            #while abs(countdown - time()) < self.waiting_time:        
+        
+            buff = self.sock_rep.recv_json()                    
+            if buff['command_name'] in self.commands:
+                print(buff)                        
+                self.commands[buff["command_name"]](**buff["method_params"])
             
-                buff = self.sock_rep.recv_json()                    
-                if buff['command_name'] in self.commands:
-                                        
-                    self.commands[buff["command_name"]](**buff["method_params"])
-                    print('waiting')
-                    
+            
         self.sock_rep.close()        
 
 
