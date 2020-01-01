@@ -119,7 +119,7 @@ class Node:
             recv_json_pred_succ_list = pred_succ_list_request.make_request(requester_obj = self, asked_properties = ('succ_list',) )
             if not recv_json_pred_succ_list is pred_succ_list_request.error_json:
                 self.succ_list = [[recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']]] + recv_json_pred_succ_list['return_info']['succ_list'][:-1]
-            
+                
             else:
                 pred_succ_list_request.action_for_error()
         print("How many more times I send to rectify the succesor. succ_list ", self.succ_list)
@@ -319,17 +319,21 @@ class Node:
     # Este método es para los nodos que necesitan
     # ser actualizados a partir del nuevo que entró.    
     def update_others(self , introduction_node = False):
-        if introduction_node: return
+        
         #print("update_others client_side")
-        #for i in range( 1, self.m + 1):
-        #    print("update_others ", (self.id - 2**(i-1))%2**self.m)            
-        #    pred_addr =  self.find_predecesor((self.id - 2**(i-1))% 2**self.m)[1]
-        #    if pred_addr == self.addr: continue     #Este if está aquí porque uno se puede tener en su finger_table. Sobre todo cuando halla m o menos nodos en la red.
-        #    print("en update_others, conéctate a ", ( pred_addr), " ", (self.id - 2**(i-1))%2**self.m) 
-        #    self.sock_req.connect("tcp://" + pred_addr)
-        #    self.sock_req.send_json({"command": "UPD_FING", "params": { "new_node_addr" : self.addr, "new_node_id" : self.id, "index_to_actualize" : i -1, "addr_requester": self.addr }, "procedence": (self.addr, "update_others")})
-        #    print(self.sock_req.recv_json()) 
-        #    self.sock_req.disconnect("tcp://" + pred_addr)
+        for i in range( 1, self.m + 1):
+            #print("update_others ", (self.id - 2**(i-1))%2**self.m)            
+            pred_id, pred_addr =  self.find_predecesor((self.id - 2**(i-1))% 2**self.m)
+            if pred_addr == self.addr: continue     #Este if está aquí porque uno se puede tener en su finger_table. Sobre todo cuando halla m o menos nodos en la red.
+            #print("en update_others, conéctate a ", ( pred_addr), " ", (self.id - 2**(i-1))%2**self.m) 
+            request_update = request(json_to_send = {"command": "UPD_FING", "params": { "new_node_addr" : self.addr, "new_node_id" : self.id, "index_to_actualize" : i -1, "addr_requester": self.addr }, "procedence": (self.addr, "update_others")}, destination_addr = pred_addr, destination_id = pred_id, context = self.context_sender )
+            recieved_json = request_update.make_request()
+            while recieved_json is request_update.error_json:
+                request_update.action_for_error()
+                request_update.destination_id, request_update.destination_addr =  self.find_predecesor((self.id - 2**(i-1))% 2**self.m)
+                if request_update.destination_addr == self.addr : continue
+                recieved_json = request_update.make_request()
+            
             #print("No puedo creer que haya muerto")
         
     #MANTRA : "Do not use or close sockets except in the thread that created them."
