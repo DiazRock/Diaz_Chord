@@ -13,7 +13,8 @@ succ = None
 #a la otra pidiéndole por el sucesor.
 #Un código que empiece, ¿qué puede hacer?
 #Empezar insertando un nodo, o cayendo en waiting_for_command
-#Me espera una noche intensa!!!!
+#NOTA 
+#Puede ser que la notificación de la posición 0 de la finger table no llegue a tiempo a find_predecesor y esto causa problemas. 
 '''
 AHORA NECESITO QUE CADA REQUEST TENGA EN CUENTA QUE PUEDE FALLAR (PINGA....... :( )
 '''
@@ -37,18 +38,18 @@ class Node:
         self.addr = addr
         self.id = id        
         self.context_sender = zmq.Context()
-        self.m = 3
-        self.length_succ_list = 3
+        self.m = 5
+        self.length_succ_list = 5
         self.constant_time_wait = 20
         self.succ_list = [(self.id, self.addr) for i in range(self.length_succ_list)]
         self.start = lambda i : (self.id + 2**(i)) % 2**self.m
         self.finger_table = []
         self.waiting_time = 10
-        
+        print(time())
         #self.inside = lambda id, interval : id >= interval[0] and id < interval[1]
         #Esto está mal, porque no mide bien la pertenencia al intervalo si este cle da la vuelta al círculo.
         #self.belongs_to = lambda id, interval: self.inside(id, interval) if interval[0] < interval[1] else not self.inside(id, interval)
-        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "SET_SUCC": self.set_as_succ, "UPD_FING" : self.update_finger_table, "CLOSEST_PRED_FING": self.closest_pred_fing, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop, "SET_PRED" : self.set_pred, "BELONG": self.belongs_messager, "CHANGE_INTRO": self.change_intro, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify, "SUCC_REQ" : self.alive }
+        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "SET_SUCC": self.set_as_succ, "UPD_FING" : self.update_finger_table, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop, "SET_PRED" : self.set_pred, "BELONG": self.belongs_messager, "CHANGE_INTRO": self.change_intro, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify, "SUCC_REQ" : self.alive }
         self.finger_table = [(self.id, self.addr) for i in range(self.m)]
         self.is_introduction_node = not introduction_node
         self.client_requester = request(destination_addr = None, destination_id = None, context = self.context_sender)
@@ -115,7 +116,9 @@ class Node:
         
         #print("pasé del if de stabilize")
         #stabilize from succesor.
-        self.client_requester.destination_id, self.client_requester.destination_addr = self.predeccesor_id, self.predeccesor_addr
+        self.client_requester.destination_id, self.client_requester.destination_addr = self.succ_list[0]
+        if self.addr == "127.0.0.1:8085" : print("en stabilize ", self.succ_list[0] )
+        #El get_pred se va a ir posiblemente y me voy a quedar con el find_predeccesor.
         recv_json_pred = self.client_requester.make_request(json_to_send = {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self, asked_properties = ('predeccesor_id', 'predeccesor_addr'))
         
         while recv_json_pred is self.client_requester.error_json and self.succ_list:
@@ -124,8 +127,9 @@ class Node:
             recv_json_pred = self.client_requester.make_request(json_to_send = {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self,  asked_properties = ('predeccesor_id', 'predeccesor_addr'))
         
         recv_json_succ_list = self.client_requester.make_request(json_to_send = {'command_name' : "GET_SUCC_LIST", 'method_params' : {}, 'procedence_addr' : self.addr}, requester_object = self, asked_properties = ("succ_list",))
-        
-        print("recv_json_succ_list ", recv_json_succ_list)
+        if self.addr == "127.0.0.1:8085" :
+            print("recv_json_succ_list ", recv_json_succ_list)
+            print("recv_json_pred ", recv_json_pred)
         self.succ_list =  [self.succ_list[0]] + recv_json_succ_list['return_info']["succ_list"][:-1]
         if self.between(recv_json_pred['return_info']['predeccesor_id'], interval = (self.id, self.succ_list[0][0]) ):
             
@@ -134,13 +138,14 @@ class Node:
             if not recv_json_pred_succ_list is self.client_requester.error_json:
                 
                 self.succ_list = [[recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']]] + recv_json_pred_succ_list['return_info']['succ_list'][:-1]
-                
+                self.finger_table[0] = ( [recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']] )
             else:
-                print("else stabilize")
+                #print("else stabilize")
                 self.client_requester.action_for_error()
-        print("How many more times I send to rectify the succesor. succ_list ", self.succ_list)
+        if self.addr == "127.0.0.1:8085" :                
+            print("How many more times I send to rectify the succesor. succ_list ", self.succ_list)
         if self.client_requester.make_request(json_to_send = {"command_name" : "RECT", "method_params" : { "predeccesor_id": self.id, "predeccesor_addr" : self.addr }, "procedence_addr" : self.addr} ) is self.client_requester.error_json:
-            print("else stabilize")
+            #print("else stabilize")
             self.client_requester.action_for_error()
         
         
@@ -173,7 +178,7 @@ class Node:
 
 
     def rectify(self, predeccesor_id, predeccesor_addr):
-        print("in rectify ", (predeccesor_id, predeccesor_addr))
+        #print("in rectify ", (predeccesor_id, predeccesor_addr))
         if self.between(predeccesor_id, interval = (self.predeccesor_id, self.id)) or self.id == self.predeccesor_id:
             print('rectify inside if ')
             if self.predeccesor_id == self.id: 
@@ -182,15 +187,15 @@ class Node:
             self.predeccesor_id, self.predeccesor_addr = predeccesor_id, predeccesor_addr
 
         else:
-            print("en el else de rectify")
+            #print("en el else de rectify")
             self.client_requester.destination_id, self.client_requester.destination_addr = (predeccesor_id, predeccesor_addr)            
             recv_json_alive = self.client_requester.make_request(json_to_send = {"command_name" : "ALIVE", "method_params" : {}, "procedence_addr" : self.addr})
-            print(self.client_requester.error_json, " ", recv_json_alive)
+            #print(self.client_requester.error_json, " ", recv_json_alive)
             if recv_json_alive is self.client_requester.error_json:
                    
                 self.predeccesor_id, self.predeccesor_addr = predeccesor_id, predeccesor_addr             
                 self.client_requester.action_for_error()
-        print("mando el response")
+        #print("mando el response")
         self.sock_rep.send_json( { "response": "ACK" } )
         
 
@@ -211,7 +216,7 @@ class Node:
         
         #print("execute_join before find_predecessor")
         recv_json = self.client_requester.make_request(json_to_send = {"command_name" : "FIND_PRED", "method_params" : {"id" : id_to_found_pred}, "procedence_addr" : self.addr}, requester_object = self, method_for_wrap = "find_predecesor")
-                
+        if self.addr == "127.0.0.1:8085" : print ("execute_join ", recv_json)        
         if recv_json is self.client_requester.error_json:
             return False
         #print("Pasé el find_pred ", recv_json)
@@ -222,49 +227,9 @@ class Node:
             return False
         self.succ_list = recv_json['return_info']['succ_list']
         
-        #print("JOIN SUCCESS!!!")
-        return True
-        #succ_list_request = property_request(command_name = "GET_SUCC", method_params = {}, procedence_addr = self.addr)
         
-        #if self.is_introduction_node:
-        #    #Estas dos son instrucciones para stabilize, no para este momento.
-        #    self.predeccesor_id, self.predeccesor_addr = ( id_node, addr_node)
-        #    self.finger_table[0]= ( id_node, addr_node)
-        #    
-        #else:
-        #    ##print("MORRRIIIIIIIIIIIII ", (pred_addr, self.addr))
-        #    if self.addr != pred_addr:                
-        #        self.sock_req.connect("tcp://" + pred_addr)
-        #        self.sock_req.send_json({"command": "GET_SUCC", "params": { }})
-        #        buff_0 = self.sock_req.recv_json()            
-        #        temp_succ_addr = buff_0['return_info'][1]
-        #        self.sock_req.send_json ( {"command" : 'SET_SUCC', "params" : { "id_succ": id_node, "addr_succ": addr_node }})
-        #        self.sock_req.recv_json()
-        #        self.sock_req.disconnect("tcp://" + pred_addr)
-        #    else:
-        #        #print("Aquí anduve else")
-        #        temp_succ_addr = self.finger_table[0][1]
-        #        self.finger_table[0] = (id_node, addr_node)
-#
-        #    #print("Pasé el if ", temp_succ_addr)
-        #    if temp_succ_addr != self.addr:
-        #        self.sock_req.connect("tcp://" + temp_succ_addr)
-        #        self.sock_req.send_json({"command": "SET_PRED", "params": { "id_pred": id_node, "addr_pred" : addr_node }})
-        #        self.sock_req.recv_json()
-        #        self.sock_req.disconnect("tcp://" + temp_succ_addr)
-        #    else:
-        #        self.predeccesor_id, self.predeccesor_addr = (id_node, addr_node)
-        ##Voy a anotar lo que primero debo hacer mañana:
-        ##Debo insertar un nodo nuevo, buscar su pred, al pred pedirle el succ, luego para el pred el nuevo succ es node, y para el succ el pred es el nuevo. 
-        ###print("CCCCCCCC")
-        #self.fill_table(id_node, finger_table, start_indexes)
-        #if self.is_introduction_node: self.fill_table(self.id, self.finger_table, [self.start(i) for i in range(self.m)] )
-        #
-        ##print("join", finger_table, sep = ' ')
-        #return_json.update({"response": "ACK" , "return_info": {"finger_table" : finger_table, "pred_id": pred_id, "pred_addr" : pred_addr, "succ_id" : self.id, "succ_addr": self.addr }, "procedence": (self.id, self.addr), "method" : 'join' })
-        #
-        #self.sock_rep.send_json(return_json)
-
+        return True
+        
     def fill_table(self, id_node, finger_table ,start_indexes):
         for i in range(self.m - 1):
                                                  
@@ -276,10 +241,6 @@ class Node:
                 #print("else ", start_indexes[i + 1], " ", (self.id, finger_table[i][0]))
                 finger_table [i + 1] = self.find_succesor(start_indexes[i + 1])[2:]
         
-        
-
-
-
     def set_pred(self, id_pred, addr_pred):
         self.predeccesor_id, self.predeccesor_addr = id_pred, addr_pred
         self.sock_rep.send_json({"response": "ACK", "procedence": "set_pred"})
@@ -396,9 +357,9 @@ class Node:
                 countdown = time()
                 if self.predeccesor_addr != self.addr:
                     self.stabilize()                
-                    index = rand.choice(choices)
-                    print("en wrapper ", self.finger_table, " ", index)
-                    self.finger_table[index] = self.find_succesor(self.start(index))                
+                    index = rand.choice( choices )
+                    print("en wrapper_loop voy a arreglar finger_table en ", index, " ", self.finger_table )
+                    self.finger_table[ index ] = self.find_succesor(self.start(index))                
         
 
     def waiting_for_command(self):
@@ -411,10 +372,12 @@ class Node:
         while True:
             
             #while abs(countdown - time()) < self.waiting_time:        
-        
+            print("por qué quieres hacer recv")
             buff = self.sock_rep.recv_json()                    
-            print(buff)                        
+            #print(buff)                        
             if buff['command_name'] in self.commands:
+                if buff['command_name'] == "RECT" or buff['command_name'] == "CLOSEST_PRED_FING" : print (time())
+                if buff['procedence_addr'] == '127.0.0.1:8085' : print (buff)
                 self.commands[buff["command_name"]](**buff["method_params"])
             
             
@@ -422,15 +385,15 @@ class Node:
 
 
     def find_succesor(self, id):
-        
+        print("he activado find_succesor")
         self.client_requester.destination_id, self.client_requester.destination_addr = self.find_predecesor(id)
         if self.client_requester.destination_id == id : return self.client_requester.destination_id, self.client_requester.destination_addr
-
         recv_json = self.client_requester.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr}, requester_object= self, asked_properties = ('succ_list', ) ) 
+        print(recv_json)
         while recv_json is self.client_requester.error_json:
             self.client_requester.destination_id, self.client_requester.destination_addr = self.find_predecesor(id)
             recv_json = self.client_requester.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr}, requester_object= self, asked_properties = ('succ_list', ) ) 
-        
+        print("pasé find_succ")
         return recv_json['return_info']['succ_list'][0]
             
             
@@ -472,6 +435,7 @@ class Node:
 
     def find_predecesor_wrapper(self, id):
         pred_id, pred_addr = self.find_predecesor(id)
+
         self.sock_rep.send_json({"response": "ACK", "return_info": {"pred_id": pred_id, "pred_addr": pred_addr}, "procedence_addr": self.addr } )
         pass
 
@@ -480,7 +444,7 @@ class Node:
         current_id = self.id
         current_succ_id, current_succ_addr = self.succ_list[0]
         current_addr = self.addr  #se supone que sea la direccin del nodo al que le pido el closest pred fing, en la primea iter no lo necesito.
-        #print("find_predecesor ",id, current_id, current_succ_id, sep = " ")
+        print("find_predecesor ",id, current_id, current_succ_id, sep = " ")
          
         while not self.between(id, interval = (current_id, current_succ_id)) and current_id != current_succ_id :
             print('while find_predecesor ', id, " ",  (current_id, current_succ_id))
@@ -507,7 +471,8 @@ class Node:
             self.client_requester.destination_id, self.client_requester.destination_addr = (recv_json_closest['return_info'][0], recv_json_closest['return_info'][1])
             recv_json_succ = self.client_requester.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method" : "find_predecesor" }, requester_object = self, asked_properties = ("succ_list", ) )
 
-            #print(self.client_requester.destination_id, self.client_requester.destination_addr, recv_json_succ)
+            print(self.client_requester.destination_id, self.client_requester.destination_addr, recv_json_succ)
+            print(recv_json_closest)
             if recv_json_succ is self.client_requester.error_json:
                 self.client_requester.action_for_error()
                 continue
@@ -525,22 +490,23 @@ class Node:
             #    current_succ_id, current_succ_addr = self.finger_table[0]
             if current_succ_id == id: 
                 return (current_succ_id, current_succ_addr)
-        #print("Tu pasaste por aqui find_predeccesor")    
-        #print((current_id, current_addr), "  ", (current_succ_id))            
+        print("Terminé find_predeccesor")    
+        print((current_id, current_addr), "  ", (current_succ_id))            
         return current_id, current_addr
 
     def closest_pred_fing_wrap (self, id):
+        print("en closest_pred_fing_wrap")
         closest_id, closest_addr = self.closest_pred_fing(id)
-        self.sock_rep.send_json({"response" : "ACK", "return_info" : {"closest_id" : closest_id, "closest_addr": closest_addr}, "procedence": self.addr})
+        self.sock_rep.send_json({"response" : "ACK", "return_info" : (closest_id, closest_addr), "procedence": self.addr})
         
 
     def closest_pred_fing(self, id):        
-        #print("\t", self.id, id, 'en closest_pred_fing', sep = ' ')
+        print("\t", self.id, id, 'en closest_pred_fing', sep = ' ')
         #el chiste aquí está en que cuando yo busque el closest, los finger tables van a estar acutalizados con los nodos en la red que se hallen vivos.
         for i in range(self.m-1, -1, -1):
             print("\t", self.finger_table[i], "\t", (self.id, id))
-            #if self.finger_table[i][0] == self.id : continue Este if puede existir si crean conflictos las últimas entradas de la finger table, aquellas que no tienen más dedos activos en ese intervalo.
-            if self.between(self.finger_table[i][0], (self.id, id)) :
+            if self.finger_table[i][0] == self.id : continue #Este if puede existir si crean conflictos las últimas entradas de la finger table, aquellas que no tienen más dedos activos en ese intervalo.
+            if self.between(self.finger_table[i][0], (self.id -1, id) ) :
                 #print("ME moriiiiiiii ", is_a_request)                
                 #print("este es el tipo en el for", self.finger_table[i])
                 return self.finger_table[i]
