@@ -16,10 +16,12 @@ class request:
     def make_request(self, json_to_send, requester_object = None, asked_properties = None, method_for_wrap = None):        
         #print("Entre a make request")
         #poll = zmq.Poller()
-        if asked_properties and self.destination_addr == json_to_send['procedence_addr']:        
+        if asked_properties and self.destination_addr == json_to_send['procedence_addr']:
+            #print("\testuve en el asked_properties")
             return {"response": "ACK", "procedence_addr": json_to_send['procedence_addr'], "return_info": {asked_property: requester_object.__dict__[asked_property] for asked_property in asked_properties } }
         if method_for_wrap and self.destination_addr == json_to_send['procedence_addr']:
-            return {"response": "ACK", "procedence_addr": json_to_send['procedence_addr'], "return_info": method_for_wrap(**json_to_send['method_params']) }
+            #print("\t", json_to_send)
+            return {"response": "ACK", "procedence_addr": json_to_send['procedence_addr'], "return_info": requester_object.__class__.__dict__ [method_for_wrap] (requester_object, **json_to_send['method_params'])}
 
 
         for i in range(self.request_retries, 0, -1):
@@ -32,8 +34,10 @@ class request:
             self.sock_req.send_json(json_to_send)            
             #if self.json_to_send['command_name'] == "RECT": print("Entré a make_request por el lado de RECT")
             if self.sock_req.poll(self.request_timeout):
-                #print("\tEntré al if en make_request()")
-                recv = self.sock_req.recv_json()                
+                #print("\tEntré al if en make_request() ", json_to_send)
+                recv = self.sock_req.recv_json()
+                #print("\tDesconecté la conexión ", self.destination_addr)
+                
                 self.sock_req.disconnect("tcp://" + self.destination_addr) 
                 return recv
 
