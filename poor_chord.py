@@ -43,11 +43,10 @@ class Node:
         self.constant_time_wait = 20
         self.succ_list = [(self.id, self.addr) for i in range(self.length_succ_list)]
         self.start = lambda i : (self.id + 2**(i)) % 2**self.m
-        self.finger_table = []
+        self.finger_table = [None for i in range(self.m)]
         self.waiting_time = 10
         
-        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop,  "CHANGE_INTRO": self.change_intro, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify, "SUCC_REQ" : self.alive }
-        self.finger_table = [(self.id, self.addr) for i in range(self.m)]
+        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop,  "CHANGE_INTRO": self.change_intro, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify, "SUCC_REQ" : self.alive }        
         self.is_introduction_node = not introduction_node
         client_requester = request(context = self.context_sender)
         if not self.is_introduction_node:            
@@ -107,7 +106,7 @@ class Node:
             recv_json_pred_succ_list = sock_req.make_request( json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self, asked_properties = ('succ_list',), destination_id = recv_json_pred['return_info'][ 'predeccesor_id'], destination_addr = recv_json_pred['return_info'][ 'predeccesor_addr'])
             if not recv_json_pred_succ_list is sock_req.error_json:
                 self.succ_list = [[recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']]] + recv_json_pred_succ_list['return_info']['succ_list'][:-1]
-                self.finger_table[0] = ( [recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']] )
+                self.finger_table[0] = self.succ_list[0]
             else:
                 print("Aquí fue que murió ", {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr} )
                 print("sending error in stabilize")
@@ -170,8 +169,8 @@ class Node:
     def execute_join(self, introduction_node, introduction_id, id_to_found_pred, sock_req):
         
         #print("execute_join before find_predecessor")
+        print("en execute_join ", id_to_found_pred)
         recv_json = sock_req.make_request(json_to_send = {"command_name" : "FIND_PRED", "method_params" : {"id" : id_to_found_pred}, "procedence_addr" : self.addr}, requester_object = self, method_for_wrap = "find_predecesor", destination_id = introduction_id, destination_addr = introduction_node)
-        
         if recv_json is sock_req.error_json:
             return False
         #print("Pasé el find_pred ", recv_json)
@@ -271,7 +270,7 @@ class Node:
                 
                 
                 self.commands[buff["command_name"]](**buff["method_params"], sock_req = client_requester)
-            
+             
             
         self.sock_rep.close()        
 
@@ -299,19 +298,19 @@ class Node:
     def find_predecesor(self, id, sock_req):
         current_id = self.id
         current_succ_id, current_succ_addr = self.succ_list[0]
+        self.finger_table[0] = self.succ_list[0]
         current_addr = self.addr  #se supone que sea la direccin del nodo al que le pido el closest pred fing, en la primea iter no lo necesito.
         
          
         while not self.between(id, interval = (current_id, current_succ_id)) and current_id != current_succ_id :            
             
             recv_json_closest = sock_req.make_request(json_to_send = {"command_name" : "CLOSEST_PRED_FING", "method_params" : {"id": id}, "procedence_addr" : self.addr, "procedence_method": "find_predecesor"}, method_for_wrap = 'closest_pred_fing', requester_object = self, destination_id = current_id, destination_addr = current_addr)
-            
+            print("en find_predeccesor ", recv_json_closest, " ", id, " ", (current_id, current_succ_id) )
             if recv_json_closest is sock_req.error_json:
-                print("Aquí fue que murió ", {"command_name" : "CLOSEST_PRED_FING", "method_params" : {"id": id}, "procedence_addr" : self.addr, "procedence_method": "find_predecesor"})
-                #Aquí hay que hacer un action error que elimine toda referencia a current_addr en el anillo.
+                print("Aquí fue que murió ", {"command_name" : "CLOSEST_PRED_FING", "method_params" : {"id": id}, "procedence_addr" : self.addr, "procedence_method": "find_predecesor"})                
                 sock_req.action_for_error(current_addr)
                 current_id, current_addr = current_succ_id, current_succ_addr
-                continue
+                
             #SI PEDIR EL SUCESOR DE CURRENT_SUCC FALLA, SIGNIFICA QUE CURRENT_SUCC ESTA MUERTO, EN CUYO CASO HAY QUE BUSCAR OTRO SUCC DE LA LISTA DE CURRENT
             
             
@@ -337,13 +336,14 @@ class Node:
         self.sock_rep.send_json({"response" : "ACK", "return_info" : (closest_id, closest_addr), "procedence": self.addr})
         
 
-    def closest_pred_fing(self, id, sock_req = None):                        
+    def closest_pred_fing(self, id, sock_req = None):
+        print("\t ", self.finger_table)
         for i in range(self.m-1, -1, -1):            
-            if self.finger_table[i][0] == self.id : continue #Este if puede existir si crean conflictos las últimas entradas de la finger table, aquellas que no tienen más dedos activos en ese intervalo.
-            if self.between(self.finger_table[i][0], (self.id -1, id) ) :
+            if self.finger_table[i] is None : continue #Este if puede existir si crean conflictos las últimas entradas de la finger table, aquellas que no tienen más dedos activos en ese intervalo.            
+            if self.between(self.finger_table[i][0], (self.id, id) ) :
+                print("\tte cogí ", self.finger_table[i])
                 return self.finger_table[i]                        
         return (self.id, self.addr)
-
 
 
 
