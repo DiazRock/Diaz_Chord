@@ -5,7 +5,7 @@ import sys
 import json
 import threading
 from sched import scheduler
-from utils import request
+from utils import request, bcolors
 from random import Random
 succ = None
 
@@ -47,6 +47,7 @@ class Node:
         self.waiting_time = 10
         
         self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop,  "CHANGE_INTRO": self.change_intro, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify, "SUCC_REQ" : self.alive }        
+        self.commands_that_need_request = {"RECT", "FIND_SUCC", "FIND_PRED", "CLOSEST_PRED_FING", "STAB"}
         self.is_introduction_node = not introduction_node
         client_requester = request(context = self.context_sender)
         if not self.is_introduction_node:            
@@ -91,33 +92,35 @@ class Node:
         
         
         #El get_pred se va a ir posiblemente y me voy a quedar con el find_predeccesor.
-        recv_json_pred = sock_req.make_request(json_to_send = {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self, asked_properties = ('predeccesor_id', 'predeccesor_addr'), destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1])
-        
-        while recv_json_pred is sock_req.error_json and self.succ_list:
-            print("Aquí fue que murió ", {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr})
-            self.succ_list.pop(0)            
-            recv_json_pred = sock_req.make_request(json_to_send = {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self,  asked_properties = ('predeccesor_id', 'predeccesor_addr'), destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1])
-        
-        recv_json_succ_list = sock_req.make_request(json_to_send = {'command_name' : "GET_SUCC_LIST", 'method_params' : {}, 'procedence_addr' : self.addr}, requester_object = self, asked_properties = ("succ_list",), destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1])
-        
-        self.succ_list =  [self.succ_list[0]] + recv_json_succ_list['return_info']["succ_list"][:-1]
+        recv_json_pred = sock_req.make_request(json_to_send = {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method": "stabilize_95"}, requester_object = self, asked_properties = ('predeccesor_id', 'predeccesor_addr'), destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1])
+        if recv_json_pred is sock_req.error_json:
+            #self.succ_list.pop(0)
+            #Aquí retorno y espero a la próxima vuelta.
+            print('expulsé a ',self.succ_list.pop(0))
+            return
+                      
+        recv_json_succ_list = sock_req.make_request(json_to_send = {'command_name' : "GET_SUCC_LIST", 'method_params' : {}, 'procedence_addr' : self.addr, "procedence_method": "stabilize_104"}, requester_object = self, asked_properties = ("succ_list",), destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1])
+        if recv_json_succ_list is sock_req.error_json: return        
+        self.succ_list = [self.succ_list[0]] + recv_json_succ_list['return_info']["succ_list"][:-1]
+                    
         if self.between(recv_json_pred['return_info']['predeccesor_id'], interval = (self.id, self.succ_list[0][0]) ):
-                        
-            recv_json_pred_succ_list = sock_req.make_request( json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self, asked_properties = ('succ_list',), destination_id = recv_json_pred['return_info'][ 'predeccesor_id'], destination_addr = recv_json_pred['return_info'][ 'predeccesor_addr'])
+                                    
+            recv_json_pred_succ_list = sock_req.make_request( json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method":  "stabilize_109"}, requester_object = self, asked_properties = ('succ_list',), destination_id = recv_json_pred['return_info'][ 'predeccesor_id'], destination_addr = recv_json_pred['return_info'][ 'predeccesor_addr'])
             if not recv_json_pred_succ_list is sock_req.error_json:
+                
                 self.succ_list = [[recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']]] + recv_json_pred_succ_list['return_info']['succ_list'][:-1]
-                self.finger_table[0] = self.succ_list[0]
+                
             else:
-                print("Aquí fue que murió ", {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr} )
-                print("sending error in stabilize")
-                sock_req.action_for_error(self.succ_list[0][1])
+                print("Aquí fue que murió ", {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr}, " ", sock_req )
+                print("sending error in stabilize from predeccesor")
+
+                sock_req.action_for_error( recv_json_pred['return_info']['predeccesor_addr'] )
                 
         if sock_req.make_request(json_to_send = {"command_name" : "RECT", "method_params" : { "predeccesor_id": self.id, "predeccesor_addr" : self.addr }, "procedence_addr" : self.addr}, destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1] ) is sock_req.error_json:
-            print("Aquí fue que murió ", {"command_name" : "RECT", "method_params" : { "predeccesor_id": self.id, "predeccesor_addr" : self.addr }, "procedence_addr" : self.addr} )
+            print("Aquí fue que murió intentando rectify en stabilize", {"command_name" : "RECT", "method_params" : { "predeccesor_id": self.id, "predeccesor_addr" : self.addr }, "procedence_addr" : self.addr}, " ", sock_req )
             sock_req.action_for_error(self.succ_list[0][1])
         
         
-
 
     def between(self, id, interval):
         if interval[0] < interval[1]:
@@ -136,24 +139,23 @@ class Node:
         if self.between(predeccesor_id, interval = (self.predeccesor_id, self.id)) or self.id == self.predeccesor_id:
             #print('rectify inside if ')
             if self.predeccesor_id == self.id: 
-                self.succ_list[0] = (predeccesor_id, predeccesor_addr)
-                self.finger_table[0] = (predeccesor_id, predeccesor_addr)
+                self.succ_list[0] = (predeccesor_id, predeccesor_addr)                
             self.predeccesor_id, self.predeccesor_addr = predeccesor_id, predeccesor_addr
 
         else:
             #print("en el else de rectify")            
             #print("I'm going to send ALIVE command to ", (predeccesor_id, predeccesor_addr))            
-            recv_json_alive = sock_req.make_request(json_to_send = {"command_name" : "ALIVE", "method_params" : {}, "procedence_addr" : self.addr}, procedence = "rectify", destination_id = predeccesor_id, destination_addr = predeccesor_addr)
+            recv_json_alive = sock_req.make_request(json_to_send = {"command_name" : "ALIVE", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method": "rectify"}, destination_id = self.predeccesor_id, destination_addr = self.predeccesor_addr)
             #print(sock_req.error_json, " ", recv_json_alive)
             if recv_json_alive is sock_req.error_json:
                    
                 self.predeccesor_id, self.predeccesor_addr = predeccesor_id, predeccesor_addr             
-                sock_req.action_for_error(predeccesor_addr)
+                sock_req.action_for_error(self.predeccesor_addr)
         #print("mando el response")
         self.sock_rep.send_json( { "response": "ACK" } )
         
 
-    def answer_to_join(self, sock_req = None):        
+    def answer_to_join(self):        
         self.sock_rep.send_json({"response": "ACK_to_join", "return_info": {"need_principal": self.isPrincipal and self.has_repeated(self.succ_list) }})
         
     def has_repeated(self, l):
@@ -169,7 +171,7 @@ class Node:
     def execute_join(self, introduction_node, introduction_id, id_to_found_pred, sock_req):
         
         #print("execute_join before find_predecessor")
-        print("en execute_join ", id_to_found_pred)
+        #print("en execute_join ", id_to_found_pred)
         recv_json = sock_req.make_request(json_to_send = {"command_name" : "FIND_PRED", "method_params" : {"id" : id_to_found_pred}, "procedence_addr" : self.addr}, requester_object = self, method_for_wrap = "find_predecesor", destination_id = introduction_id, destination_addr = introduction_node)
         if recv_json is sock_req.error_json:
             return False
@@ -184,7 +186,7 @@ class Node:
         
         return True
                     
-    def get_params(self, sock_req = None):        
+    def get_params(self):        
         self.sock_rep.send_json({"response": "ACK", "return_info": {"finger_table" : self.finger_table, "predeccesor_addr" : self.predeccesor_addr, "predeccesor_id" : self.predeccesor_id, "succ_list" : self.succ_list } })
 
     def get_prop(self, prop_name):
@@ -194,16 +196,16 @@ class Node:
         self.sock_rep.send_json({'response': 'ACK', "return_info": self.__dict__[prop_name] })
 
     
-    def get_pred(self, sock_req = None):
+    def get_pred(self):
         self.sock_rep.send_json({"response": "ACK", "return_info": {"predeccesor_id" : self.predeccesor_id, "predeccesor_addr" : self.predeccesor_addr } } )
 
 
-    def alive(self, sock_req = None):
+    def alive(self):
         self.sock_rep.send_json({"response": "ACK", "procedence_addr": self.addr})
 
     
 
-    def get_succ_list(self, sock_req = None):
+    def get_succ_list(self):
         
         self.sock_rep.send_json( {"response": "ACK", "return_info": {"succ_list" : self.succ_list} } )
     
@@ -246,11 +248,11 @@ class Node:
         choices = [i for i in range(self.m)]
         while True:
             if abs (countdown - time( ) ) > self.waiting_time:
-                countdown = time()
                 if self.predeccesor_addr != self.addr:
                     self.stabilize(sock_req = requester)                
                     index = rand.choice( choices )                    
                     self.finger_table[ index ] = self.find_succesor(self.start(index), sock_req = requester)                
+                countdown = time()
         
 
     def waiting_for_command(self, client_requester):
@@ -266,11 +268,12 @@ class Node:
             buff = self.sock_rep.recv_json()
 
             if buff['command_name'] in self.commands:
-                print(buff, " recieved buff in the main thread")                        
+                #print(buff, " recieved buff in the main thread")                        
                 
-                
-                self.commands[buff["command_name"]](**buff["method_params"], sock_req = client_requester)
-             
+                if buff['command_name'] in self.commands_that_need_request:
+                    self.commands[buff["command_name"]](**buff["method_params"], sock_req = client_requester)
+                else:
+                    self.commands[buff["command_name"]](**buff["method_params"])
             
         self.sock_rep.close()        
 
@@ -279,11 +282,11 @@ class Node:
         
         destination_id, destination_addr = self.find_predecesor(id, sock_req)
         if destination_id == id : return destination_id, destination_addr
-        recv_json = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr}, requester_object= self, asked_properties = ('succ_list', ), destination_id = destination_id, destination_addr = destination_addr ) 
+        recv_json = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr, "procedence_method": "find_succesor_286"}, requester_object= self, asked_properties = ('succ_list', ), destination_id = destination_id, destination_addr = destination_addr ) 
         #print(recv_json)
         while recv_json is sock_req.error_json:
-            print("Aquí fue que murió ", {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr})
-            destination_id, destination_addr = self.find_predecesor(id, sock_req)
+            print("Aquí fue que murió find_succesor", {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr}, " ", sock_req)
+            destination_id, destination_addr = self.find_predecesor(destination_id, sock_req)
             recv_json = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr}, requester_object= self, asked_properties = ('succ_list', ), destination_id = destination_id, destination_addr = destination_addr ) 
         
         return recv_json['return_info']['succ_list'][0]
@@ -304,26 +307,26 @@ class Node:
          
         while not self.between(id, interval = (current_id, current_succ_id)) and current_id != current_succ_id :            
             
+            #La primera vez que yo hago esto no tiene sentido preguntar si se cae la conexión. Porque estoy parado en self,
+            #que es un nodo que nunca voy a asumir muerto. 
+            #Pero si otro current_addr está muerto, la búsqueda puede dar error. ¿Esto, qué significa? 
+            #El nuevo current_addr es resultado de closest_pred_fing. Es un finger que está muerto,
+            #cosa que no es cómoda verificar aquí.
             recv_json_closest = sock_req.make_request(json_to_send = {"command_name" : "CLOSEST_PRED_FING", "method_params" : {"id": id}, "procedence_addr" : self.addr, "procedence_method": "find_predecesor"}, method_for_wrap = 'closest_pred_fing', requester_object = self, destination_id = current_id, destination_addr = current_addr)
-            print("en find_predeccesor ", recv_json_closest, " ", id, " ", (current_id, current_succ_id) )
-            if recv_json_closest is sock_req.error_json:
-                print("Aquí fue que murió ", {"command_name" : "CLOSEST_PRED_FING", "method_params" : {"id": id}, "procedence_addr" : self.addr, "procedence_method": "find_predecesor"})                
-                sock_req.action_for_error(current_addr)
-                current_id, current_addr = current_succ_id, current_succ_addr
-                
-            #SI PEDIR EL SUCESOR DE CURRENT_SUCC FALLA, SIGNIFICA QUE CURRENT_SUCC ESTA MUERTO, EN CUYO CASO HAY QUE BUSCAR OTRO SUCC DE LA LISTA DE CURRENT
+            #print("en find_predeccesor ", recv_json_closest, " ", id, " ", (current_id, current_succ_id) )
+            
             
             
             recv_json_succ = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method" : "find_predecesor" }, requester_object = self, asked_properties = ("succ_list", ), destination_id = recv_json_closest['return_info'][0], destination_addr = recv_json_closest['return_info'][1] )
 
-            #print(sock_req.destination_id, sock_req.destination_addr, recv_json_succ)
-            #print(recv_json_closest)
+            #Por acá estoy pidiendo info al finger_table que yo supongo está vivo. Que si no está vivo hay que hacer closest_pred_fing de nuevo.
+            #Esto significa que puedo mandar a hacer continue sin miedo porque va a caer en closest_pred_fing y va a ver que el nodo está muerto.
             if recv_json_succ is sock_req.error_json:
-                print("Aquí fue que murió ", {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method" : "find_predecesor" })
+                print("Aquí fue que murió find_predeccesor", {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method" : "find_predecesor" }, " ", sock_req)
                 sock_req.action_for_error(recv_json_closest['return_info'][1])
                 continue
                 #Voy a suponer que la lista de sucesores se estabiliza en stabilize
-                #Tienes que cambiar el succ_list[0], y cuando vayas a succ_list.next(), tienes que \
+                
             current_id, current_addr = recv_json_closest['return_info'][0], recv_json_closest['return_info'][1]
             current_succ_id, current_succ_addr = recv_json_succ['return_info']['succ_list'][0]    
             if current_succ_id == id: 
@@ -331,18 +334,25 @@ class Node:
         
         return current_id, current_addr
 
-    def closest_pred_fing_wrap (self, id, sock_req = None):        
-        closest_id, closest_addr = self.closest_pred_fing(id)
+    def closest_pred_fing_wrap (self, id, sock_req):        
+        closest_id, closest_addr = self.closest_pred_fing(id, sock_req)
         self.sock_rep.send_json({"response" : "ACK", "return_info" : (closest_id, closest_addr), "procedence": self.addr})
         
 
-    def closest_pred_fing(self, id, sock_req = None):
-        print("\t ", self.finger_table)
+    def closest_pred_fing(self, id, sock_req):
+        #print("\t ", self.finger_table)
         for i in range(self.m-1, -1, -1):            
             if self.finger_table[i] is None : continue #Este if puede existir si crean conflictos las últimas entradas de la finger table, aquellas que no tienen más dedos activos en ese intervalo.            
             if self.between(self.finger_table[i][0], (self.id, id) ) :
-                print("\tte cogí ", self.finger_table[i])
-                return self.finger_table[i]                        
+                #Aquí debo averiguar si el finger que estoy tomando está vivo o no.
+                #print("\tte cogí ", self.finger_table[i])
+                recv_json = sock_req.make_request(json_to_send = {"command_name": "SUCC_REQ", "method_params": {}, "procedence": self.addr}, destination_addr = self.finger_table[i][1], destination_id = self.finger_table[i][0])
+                if not recv_json is sock_req.error_json:
+                    return self.finger_table[i]
+                #No me queda claro si esto se vuelve recursivo infinito.
+                self.finger_table[i] = self.find_succesor(self.start(i), sock_req)
+                i += 1
+
         return (self.id, self.addr)
 
 

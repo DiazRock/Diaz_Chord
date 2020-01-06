@@ -1,9 +1,20 @@
 import zmq 
 
 
+class bcolors:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    
+
 
 class request:
-    def __init__(self, context, error_json = {"response": "ERR"},  request_timeout = 6e3, request_retries = 3):                
+    def __init__(self, context, error_json = "ERR",  request_timeout = 6e3, request_retries = 3):                
         self.request_timeout = request_timeout
         self.request_retries = request_retries
         self.context = context
@@ -20,6 +31,8 @@ class request:
             return {"response": "ACK", "procedence_addr": json_to_send['procedence_addr'], "return_info": {asked_property: requester_object.__dict__[asked_property] for asked_property in asked_properties } }
         if method_for_wrap and destination_addr == json_to_send['procedence_addr']:
             #print("\t", json_to_send)
+            if json_to_send['command_name'] == 'CLOSEST_PRED_FING': 
+                json_to_send['method_params'].update({"sock_req" : self})                
             return {"response": "ACK", "procedence_addr": json_to_send['procedence_addr'], "return_info": requester_object.__class__.__dict__ [method_for_wrap] (requester_object, **json_to_send['method_params'])}
 
 
@@ -44,7 +57,8 @@ class request:
 
             #else:
             print("Retrying to connect, time: ", (self.request_retries - i) + 1)
-            print("I'm trying to send to ", json_to_send, " ", destination_addr)
+            json_to_send.update({"socket": repr(self)})
+            print(f"{bcolors.FAIL}I'm trying to send %s to %s {bcolors.ENDC}" %(json_to_send, destination_addr))
             self.sock_req.disconnect("tcp://" + destination_addr)
             
             self.sock_req.setsockopt(zmq.LINGER, 0)
@@ -87,5 +101,3 @@ class initial_request(request):
 #            return {"response": "ACK", "procedence_addr": self.json_to_send['procedence_addr'], "return_info": method_for_wrap(**self.json_to_send['method_params']) }
 #        return super().make_request()
 
-
-    
