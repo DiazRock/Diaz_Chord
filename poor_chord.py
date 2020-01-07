@@ -1,10 +1,8 @@
+import sys
 import zmq
 from time import time
-from time import sleep
-import sys
-import json
 import threading
-from sched import scheduler
+import hashlib
 from utils import request, bcolors
 from random import Random
 succ = None
@@ -34,45 +32,40 @@ AHORA NECESITO QUE CADA REQUEST TENGA EN CUENTA QUE PUEDE FALLAR (PINGA....... :
 # programa). En fin, que ahora lo que se debe hacer es emitir un mensajito mierdero, que diga:
 # moriiiii.
 class Node:
-    def __init__(self, addr, id, introduction_node = None, introduction_id = None):        
+    def __init__(self, addr, introduction_node = None):        
         self.addr = addr
-        self.id = id        
+        self.id = int(hashlib.sha1(bytes(addr.split(':')[1], 'utf-8') ).hexdigest(), 16 )
+        
         self.context_sender = zmq.Context()
         self.m = 64
-        self.length_succ_list = 3
-        self.constant_time_wait = 20
+        self.length_succ_list = 3        
         self.succ_list = [(self.id, self.addr) for i in range(self.length_succ_list)]
         self.start = lambda i : (self.id + 2**(i)) % 2**self.m
         self.finger_table = [None for i in range(self.m)]
         self.waiting_time = 10
         
-        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop,  "CHANGE_INTRO": self.change_intro, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify }        
+        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify }        
         self.commands_that_need_request = {"RECT", "FIND_SUCC", "FIND_PRED", "CLOSEST_PRED_FING", "STAB"}
-        self.is_introduction_node = not introduction_node
+        
         client_requester = request(context = self.context_sender)
-        if not self.is_introduction_node:            
+        if introduction_node:
+            introduction_id = int(hashlib.sha1(bytes(introduction_node.split(':')[1], 'utf-8') ).hexdigest(), 16 )            
             recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_addr = introduction_node, destination_id = introduction_id)
             #print("En Node.__init__") 
             while recieved_json is client_requester.error_json:                
                 client_requester.action_for_error(introduction_node)
                 print("Enter address to retry ")
-                introduction_id, introduction_node = input().split()
-                introduction_id = int(introduction_id)
+                introduction_node = input().split()
+                introduction_id = int(hashlib.sha1(bytes(introduction_node.split(':')[1], 'utf-8') ).hexdigest(), 16 )            
                 print("Connecting now to ", (introduction_node, introduction_id))
                 
                 recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_id = introduction_id, destination_addr = introduction_node)
-
-            #print(recieved_json)
-            if recieved_json['return_info']['need_principal']:
-                print("Warning: There's not enough principal nodes in the Chord ring. You need to be careful\nmientras este warning se emita y cuidar que no se desconecten los nodos entrados.\nOtherwise, there's no guaranty of a correct function of the protocol.")
-                self.isPrincipal = True
-            
-            
+                        
             while not self.execute_join(introduction_node, introduction_id, self.start(0), client_requester):
                 client_requester.action_for_error(introduction_node)
                 print("Enter address to retry ")
-                introduction_id, introduction_node = input().split()
-                introduction_id = int(introduction_id)
+                introduction_node = input().split()
+                introduction_id = int(hashlib.sha1(bytes(introduction_node.split(':')[1], 'utf-8') ).hexdigest(), 16 )
                 print("Connecting now to ", (introduction_id, introduction_node))                
                 recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_id = introduction_id, destination_addr = introduction_node)
                         
@@ -161,7 +154,7 @@ class Node:
         
 
     def answer_to_join(self):        
-        self.sock_rep.send_json({"response": "ACK_to_join", "return_info": {"need_principal": self.isPrincipal and self.has_repeated(self.succ_list) }})
+        self.sock_rep.send_json({"response": "ACK_to_join", "return_info": {}})
         
     def has_repeated(self, l):
         for i in range(len(l)):
@@ -214,11 +207,7 @@ class Node:
         
         self.sock_rep.send_json( {"response": "ACK", "return_info": {"succ_list" : self.succ_list} } )
     
-    def change_intro(self):
-        val = self.is_introduction_node
-        self.is_introduction_node = False
-        self.sock_rep.send_json({"response" : "ACK", "return_info": val})
-
+    
         
     #MANTRA : "Do not use or close sockets except in the thread that created them."
     # This method is the articulation point of the all engine.
@@ -353,9 +342,9 @@ class Node:
 
 
 
-if len(sys.argv) > 3:
-    n = Node(introduction_node = sys.argv[1], introduction_id= sys.argv[2], addr= sys.argv[3], id = int(sys.argv[4]))
+if len(sys.argv) > 2:
+    n = Node(introduction_node = sys.argv[1], addr= sys.argv[2])
     
 else:
-    n = Node(addr = sys.argv[1], id = int(sys.argv[2]))
+    n = Node(addr = sys.argv[1] )
     
