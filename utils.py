@@ -34,7 +34,7 @@ class request:
             if json_to_send['command_name'] == 'CLOSEST_PRED_FING': 
                 json_to_send['method_params'].update({"sock_req" : self})                
             return {"response": "ACK", "procedence_addr": json_to_send['procedence_addr'], "return_info": requester_object.__class__.__dict__ [method_for_wrap] (requester_object, **json_to_send['method_params'])}
-
+        retried = False
 
         for i in range(self.request_retries, 0, -1):
             
@@ -42,7 +42,7 @@ class request:
             self.sock_req.connect("tcp://" + destination_addr)            
             #Nota: El json que yo voy a enviar no tiene por qué estar cabledo dentro de la clase, eso es un mal diseño, me acabo de dar cuenta, eso significa que tengo que modificar las clases cada vez que quiera enviar un json diferente lo cual es una pesadez.            
             #if self.command_name == "RECT": json_to_send.update({"cosa": "ppppppp"})
-            json_to_send.update({"time" : (self.request_retries - i) + 1})
+            
             
             self.sock_req.send_json(json_to_send)            
             #print("I'm going to send info to %s" %destination_addr)
@@ -53,14 +53,15 @@ class request:
                 #print("\tDesconecté la conexión ", self.destination_addr)
                 
                 self.sock_req.disconnect("tcp://" + destination_addr) 
+                if retried: print(f"{bcolors.OKGREEN}Yea, baby, I did it %s, to %s {bcolors.ENDC}" %(json_to_send, destination_addr))
                 return recv
 
             #else:
             print("Retrying to connect, time: ", (self.request_retries - i) + 1)
-            json_to_send.update({"socket": repr(self)})
+            
             print(f"{bcolors.FAIL}I'm trying to send %s to %s {bcolors.ENDC}" %(json_to_send, destination_addr))
             self.sock_req.disconnect("tcp://" + destination_addr)
-            
+            retried = True
             self.sock_req.setsockopt(zmq.LINGER, 0)
             self.sock_req.close()
             
