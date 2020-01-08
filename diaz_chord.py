@@ -212,7 +212,7 @@ class Node:
 
             if buff['command_name'] in self.commands:
                 
-                
+                if buff['command_name'] == "FIND_SUCC": print(buff)
                 if buff['command_name'] in self.commands_that_need_request:
                     self.commands[buff["command_name"]](**buff["method_params"], sock_req = client_requester)
                 else:
@@ -231,8 +231,7 @@ class Node:
     def find_succesor(self, id, sock_req):
         tuple_info = self.find_predecesor(id, sock_req)
         if tuple_info:
-            destination_id, destination_addr = tuple_info
-            if destination_id == id : return destination_id, destination_addr
+            destination_id, destination_addr = tuple_info            
             recv_json = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr, "procedence_method": "find_succesor_286"}, requester_object= self, asked_properties = ('succ_list', ), destination_id = destination_id, destination_addr = destination_addr ) 
             if recv_json is sock_req.error_json: return None
             return recv_json['return_info']['succ_list'][0]
@@ -244,8 +243,10 @@ class Node:
         self.sock_rep.send_json({"response": "ACK", "return_info": {"pred_id": pred_id, "pred_addr": pred_addr}, "procedence_addr": self.addr } )
         
 
-	#There's only one thing that I'm going to say about this method. It works.
-	#It is not beautifull code, I'm not proud of it. But it works.     
+	#In this method the node executes a query about an input id. 
+	#There is a particular case if the query id is equal to current_succ_id.
+	#In that case, without the and clause in line 256, the while loop executes infinity, because the id never be
+	#between current_id and current_succ_id in future iterations.        
     def find_predecesor(self, id, sock_req):
         current_id = self.id
         current_succ_id, current_succ_addr = self.succ_list[0]
@@ -253,7 +254,7 @@ class Node:
         current_addr = self.addr  
         
          
-        while not self.between(id, interval = (current_id, current_succ_id)) and current_id != current_succ_id :            
+        while not self.between(id, interval = (current_id, current_succ_id)) and current_succ_id != id :            
             
             recv_json_closest = sock_req.make_request(json_to_send = {"command_name" : "CLOSEST_PRED_FING", "method_params" : {"id": id}, "procedence_addr" : self.addr, "procedence_method": "find_predecesor"}, method_for_wrap = 'closest_pred_fing', requester_object = self, destination_id = current_id, destination_addr = current_addr)
             
@@ -267,10 +268,8 @@ class Node:
             
                 
             current_id, current_addr = recv_json_closest['return_info'][0], recv_json_closest['return_info'][1]
-            current_succ_id, current_succ_addr = recv_json_succ['return_info']['succ_list'][0]    
-            if current_succ_id == id: 
-                return (current_succ_id, current_succ_addr)
-        
+            current_succ_id, current_succ_addr = recv_json_succ['return_info']['succ_list'][0]                
+        print("pasé el find_pred ", (current_id, current_addr))
         return current_id, current_addr
 
     def closest_pred_fing_wrap (self, id, sock_req):        

@@ -12,16 +12,18 @@ class client_side:
     def send_info(self):
         while True:
             buff = input().split()
-            #print({buff[i] : buff[i + 1] for i in range(2, len(buff), 2)})
-            #print(buff)
             self.sock_req.connect("tcp://"+ buff[0])
             params = {buff[i] : buff[i + 1] for i in range(2, len(buff), 2) }
-            #print(params)
+            
             if "BELONG" in buff:
                 params['interval'] = params['interval'].split(',')
                 params['interval'] = ( int ( params['interval'][0][1:]), int(params['interval'][1][:-1] ) )
                 params['id'] = int(params['id'])
-                #print(params['interval'][0][1:], "  ", params['interval'][1][:-1])
+                
+            if "FIND_SUCC" in buff:
+                params['id'] = int(params["id"])
+                
+
             self.sock_req.send_json({"command_name": buff[1], "method_params": params , "procedence_addr": "127.0.0.1:5050"})
             info = self.sock_req.recv_json()
             print(info)
