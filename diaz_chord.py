@@ -234,7 +234,7 @@ class Node:
             destination_id, destination_addr = tuple_info
             if destination_id == id : return destination_id, destination_addr
             recv_json = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params": {}, "procedence_addr": self.addr, "procedence_method": "find_succesor_286"}, requester_object= self, asked_properties = ('succ_list', ), destination_id = destination_id, destination_addr = destination_addr ) 
-            if recv_json is sock_req.error_json: return None        
+            if recv_json is sock_req.error_json: return None
             return recv_json['return_info']['succ_list'][0]
         return None
             
