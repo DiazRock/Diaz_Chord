@@ -49,7 +49,7 @@ class request:
                 return recv
 
             #else:
-            print("Retrying to connect, time: ", (self.request_retries - i) + 1)
+            print(f"{bcolors.WARNING}Retrying to connect, time: {bcolors.ENDC}", (self.request_retries - i) + 1)
             
             print(f"{bcolors.WARNING}I'm trying to send %s to %s {bcolors.ENDC}" %(json_to_send, destination_addr))
             self.sock_req.disconnect("tcp://" + destination_addr)
