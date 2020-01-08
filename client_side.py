@@ -22,7 +22,7 @@ class client_side:
                 params['interval'] = ( int ( params['interval'][0][1:]), int(params['interval'][1][:-1] ) )
                 params['id'] = int(params['id'])
                 #print(params['interval'][0][1:], "  ", params['interval'][1][:-1])
-            self.sock_req.send_json({"command": buff[1], "params": params })
+            self.sock_req.send_json({"command_name": buff[1], "method_params": params , "procedence_addr": "127.0.0.1:5050"})
             info = self.sock_req.recv_json()
             print(info)
             self.sock_req.disconnect("tcp://"+ buff[0])
