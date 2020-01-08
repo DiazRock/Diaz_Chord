@@ -5,6 +5,7 @@ import threading
 import hashlib
 from utils import request, bcolors
 from random import Random
+from functools import reduce
 succ = None
 
 #Una porción del código que le envíe la información
@@ -34,7 +35,9 @@ AHORA NECESITO QUE CADA REQUEST TENGA EN CUENTA QUE PUEDE FALLAR (PINGA....... :
 class Node:
     def __init__(self, addr, introduction_node = None):        
         self.addr = addr
-        self.id = int(hashlib.sha1(bytes(addr.split(':')[1], 'utf-8') ).hexdigest(), 16 )
+        self.domain_addr = lambda value : reduce((lambda x,y : x + y), [x for x in value.split(":")[0].split(".") + [value.split(":")[1] ] ]) 
+        self.turn_in_hash = lambda input_to_id : int(hashlib.sha1(bytes( self.domain_addr (input_to_id), 'utf-8') ).hexdigest(), 16 )
+        self.id = self.turn_in_hash(addr)
         
         self.context_sender = zmq.Context()
         self.m = 64
@@ -44,19 +47,19 @@ class Node:
         self.finger_table = [None for i in range(self.m)]
         self.waiting_time = 10
         
-        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify }        
+        self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor_wrapper, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify }        
         self.commands_that_need_request = {"RECT", "FIND_SUCC", "FIND_PRED", "CLOSEST_PRED_FING", "STAB"}
         
         client_requester = request(context = self.context_sender)
         if introduction_node:
-            introduction_id = int(hashlib.sha1(bytes(introduction_node.split(':')[1], 'utf-8') ).hexdigest(), 16 )            
+            introduction_id = self.turn_in_hash(introduction_node)
             recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_addr = introduction_node, destination_id = introduction_id)
             #print("En Node.__init__") 
             while recieved_json is client_requester.error_json:                
                 client_requester.action_for_error(introduction_node)
                 print("Enter address to retry ")
-                introduction_node = input().split()
-                introduction_id = int(hashlib.sha1(bytes(introduction_node.split(':')[1], 'utf-8') ).hexdigest(), 16 )            
+                introduction_node = input()
+                introduction_id = self.turn_in_hash(introduction_node)            
                 print("Connecting now to ", (introduction_node, introduction_id))
                 
                 recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_id = introduction_id, destination_addr = introduction_node)
@@ -64,8 +67,8 @@ class Node:
             while not self.execute_join(introduction_node, introduction_id, self.start(0), client_requester):
                 client_requester.action_for_error(introduction_node)
                 print("Enter address to retry ")
-                introduction_node = input().split()
-                introduction_id = int(hashlib.sha1(bytes(introduction_node.split(':')[1], 'utf-8') ).hexdigest(), 16 )
+                introduction_node = input()
+                introduction_id = self.turn_in_hash(introduction_node)
                 print("Connecting now to ", (introduction_id, introduction_node))                
                 recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_id = introduction_id, destination_addr = introduction_node)
                         
@@ -77,7 +80,8 @@ class Node:
         
         self.wrapper_action(client_requester)
 
-
+    
+        
     def stabilize(self, sock_req : request):
         
         print("en stabilize preguntándole a ", self.succ_list[0])
@@ -273,6 +277,10 @@ class Node:
             
         self.sock_rep.close()        
 
+    def find_succesor_wrapper(self, id, sock_req):
+        info = self.find_succesor(id, sock_req)
+        self.sock_rep.send_json({"response": "ACK", "return_info": info})
+        pass
 
     def find_succesor(self, id, sock_req):
         tuple_info = self.find_predecesor(id, sock_req)
