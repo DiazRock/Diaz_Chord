@@ -269,7 +269,7 @@ class Node:
                 
             current_id, current_addr = recv_json_closest['return_info'][0], recv_json_closest['return_info'][1]
             current_succ_id, current_succ_addr = recv_json_succ['return_info']['succ_list'][0]                
-        print("pasé el find_pred ", (current_id, current_addr))
+        
         return current_id, current_addr
 
     def closest_pred_fing_wrap (self, id, sock_req):        
