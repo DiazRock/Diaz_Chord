@@ -14,12 +14,15 @@ class bcolors:
 
 
 class request:
-    def __init__(self, context, error_json = "ERR",  request_timeout = 6e3, request_retries = 3):                
+    def __init__(self, context, verbose_option, error_json = "ERR",  request_timeout = 6e3, request_retries = 3):
+        
         self.request_timeout = request_timeout
         self.request_retries = request_retries
         self.context = context
         self.error_json = error_json            
-        self.sock_req = self.context.socket(zmq.REQ) 
+        self.sock_req = self.context.socket(zmq.REQ)
+        self.verbose_option = verbose_option
+
     def make_request(self, json_to_send, destination_addr, destination_id, requester_object = None, asked_properties = None, method_for_wrap = None, procedence = None):        
         if asked_properties and destination_addr == json_to_send['procedence_addr']:
             
@@ -34,24 +37,27 @@ class request:
         for i in range(self.request_retries, 0, -1):
                         
             self.sock_req.connect("tcp://" + destination_addr)            
-            
+            if self.verbose_option:
+                print(f"{bcolors.BOLD}Sending message %s to %s{bcolors.ENDC}" %(json_to_send, destination_addr))
             
             self.sock_req.send_json(json_to_send)            
             
             if self.sock_req.poll(self.request_timeout):
-                #print("\tEntré al if en make_request() ", json_to_send)
+                
 
                 recv = self.sock_req.recv_json()
-                #print("\tDesconecté la conexión ", self.destination_addr)
+                if self.verbose_option:
+                    print(f"{bcolors.OKBLUE}Recieved %s from %s{bcolors.ENDC}" %(recv, destination_addr))
                 
                 self.sock_req.disconnect("tcp://" + destination_addr) 
                 if retried: print(f"{bcolors.OKGREEN}Yea, baby, I did it %s, to %s {bcolors.ENDC}" %(json_to_send, destination_addr))
                 return recv
 
-            #else:
-            print(f"{bcolors.WARNING}Retrying to connect, time: {bcolors.ENDC}", (self.request_retries - i) + 1)
             
-            print(f"{bcolors.WARNING}I'm trying to send %s to %s {bcolors.ENDC}" %(json_to_send, destination_addr))
+            if self.verbose_option:
+                print(f"{bcolors.WARNING}Retrying to connect, time: {bcolors.ENDC}", (self.request_retries - i) + 1)
+                
+                print(f"{bcolors.WARNING}I'm trying to send %s to %s {bcolors.ENDC}" %(json_to_send, destination_addr))
             self.sock_req.disconnect("tcp://" + destination_addr)
             retried = True
             self.sock_req.setsockopt(zmq.LINGER, 0)

@@ -6,18 +6,21 @@ import hashlib
 from utils import request, bcolors
 from random import Random
 from functools import reduce
-
+import argparse
+from socket import gethostbyname, gethostname
+import re
 
 #Node class of the chord ring. Each node represents an active index in the ring.
 #An index that store data about other index, maintinig only a simple invariant:
 #each node, knows its succesor.
 class Node:
-    def __init__(self, addr, introduction_node = None):        
+    def __init__(self, addr, introduction_node = None, verbose_option = False):
+                        
         self.addr = addr
         self.domain_addr = lambda value : reduce((lambda x,y : x + y), [x for x in value.split(":")[0].split(".") + [value.split(":")[1] ] ]) 
-        self.turn_in_hash = lambda input_to_id : int(hashlib.sha1(bytes( self.domain_addr (input_to_id), 'utf-8') ).hexdigest(), 16 )
-        self.id = self.turn_in_hash(addr)
-        
+        self.turn_in_hash = lambda input_to_id : int(hashlib.sha1(bytes(self.domain_addr(input_to_id), 'utf-8') ).hexdigest(), 16 )
+        self.verbose_option = verbose_option
+        self.id = self.turn_in_hash(self.addr)        
         self.context_sender = zmq.Context()
         self.m = 64
         self.length_succ_list = 3        
@@ -25,11 +28,13 @@ class Node:
         self.start = lambda i : (self.id + 2**(i)) % 2**self.m
         self.finger_table = [None for i in range(self.m)]
         self.waiting_time = 10
-        
+    
         self.commands = {"JOIN": self.answer_to_join, "FIND_SUCC": self.find_succesor_wrapper, "FIND_PRED" : self.find_predecesor_wrapper, "GET_SUCC_LIST": self.get_succ_list, "CLOSEST_PRED_FING": self.closest_pred_fing_wrap, "ALIVE": self.alive, "GET_PARAMS": self.get_params, "GET_PROP": self.get_prop, "GET_PRED": self.get_pred, "STAB": self.stabilize, "RECT": self.rectify }        
         self.commands_that_need_request = {"RECT", "FIND_SUCC", "FIND_PRED", "CLOSEST_PRED_FING", "STAB"}
-        
-        client_requester = request(context = self.context_sender)
+
+        if self.verbose_option: print("Started node ", (self.id, self.addr))
+
+        client_requester = request(context = self.context_sender, verbose_option = self.verbose_option)
         if introduction_node:
             introduction_id = self.turn_in_hash(introduction_node)
             recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_addr = introduction_node, destination_id = introduction_id)
@@ -38,7 +43,7 @@ class Node:
                 client_requester.action_for_error(introduction_node)
                 print("Enter address to retry ")
                 introduction_node = input()
-                introduction_id = self.turn_in_hash(introduction_node)            
+                introduction_id = self.turn_in_hash(self.domain_addr(introduction_node))            
                 print("Connecting now to ", (introduction_node, introduction_id))
                 
                 recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_id = introduction_id, destination_addr = introduction_node)
@@ -47,7 +52,7 @@ class Node:
                 client_requester.action_for_error(introduction_node)
                 print("Enter address to retry ")
                 introduction_node = input()
-                introduction_id = self.turn_in_hash(introduction_node)
+                introduction_id = self.turn_in_hash(self.domain_addr(introduction_node))
                 print("Connecting now to ", (introduction_id, introduction_node))                
                 recieved_json = client_requester.make_request(json_to_send = {"command_name" : "JOIN", "method_params" : {}, "procedence_addr" : self.addr}, destination_id = introduction_id, destination_addr = introduction_node)
                         
@@ -72,7 +77,9 @@ class Node:
         #is and we have k succesive fails in the Chord, we can't expect a good
         #working of the network.  
         recv_json_pred = sock_req.make_request(json_to_send = {"command_name" : "GET_PRED", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method": "stabilize_95"}, requester_object = self, asked_properties = ('predeccesor_id', 'predeccesor_addr'), destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1])
-        if recv_json_pred is sock_req.error_json:            
+        if recv_json_pred is sock_req.error_json:
+            if self.verbose_option:
+                sock_req.action_for_error(self.succ_list[0][1])
             self.succ_list.pop(0)
             self.succ_list += [(self.id, self.addr)]                                    
             return
@@ -84,13 +91,13 @@ class Node:
                     
         if self.between(recv_json_pred['return_info']['predeccesor_id'], interval = (self.id, self.succ_list[0][0]) ):
             
-
             recv_json_pred_succ_list = sock_req.make_request( json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method":  "stabilize_109"}, requester_object = self, asked_properties = ('succ_list',), destination_id = recv_json_pred['return_info'][ 'predeccesor_id'], destination_addr = recv_json_pred['return_info'][ 'predeccesor_addr'])
             if not recv_json_pred_succ_list is sock_req.error_json:
-
-            #If it's true that self has a new succesor and this new succesor is alive, then self has to actualize its succ_list    
+                
+                #If it's true that self has a new succesor and this new succesor is alive, then self has to actualize its succ_list    
                 self.succ_list = [[recv_json_pred['return_info']['predeccesor_id'], recv_json_pred['return_info']['predeccesor_addr']]] + recv_json_pred_succ_list['return_info']['succ_list'][:-1]                                       
-        
+            else:
+                self.verbose_option: sock_req.action_for_error(recv_json_pred['return_info'][ 'predeccesor_addr'])
 
     def between(self, id, interval):
         if interval[0] < interval[1]:
@@ -114,7 +121,7 @@ class Node:
             recv_json_alive = sock_req.make_request(json_to_send = {"command_name" : "ALIVE", "method_params" : {}, "procedence_addr" : self.addr, "procedence_method": "rectify"}, destination_id = self.predeccesor_id, destination_addr = self.predeccesor_addr)
             
             if recv_json_alive is sock_req.error_json:
-                   
+                if self.verbose_option: sock_req.action_for_error(self.predeccesor_addr)   
                 self.predeccesor_id, self.predeccesor_addr = predeccesor_id, predeccesor_addr             
                 sock_req.action_for_error(self.predeccesor_addr)
         
@@ -135,7 +142,7 @@ class Node:
             return False
         
         self.predeccesor_id, self.predeccesor_addr = recv_json['return_info']['pred_id'], recv_json['return_info']['pred_addr']        
-        recv_json = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self, asked_properties = "succ_list", destination_id = recv_json['return_info']['pred_id'], destination_addr = recv_json['return_info']['pred_addr'] )         
+        recv_json = sock_req.make_request(json_to_send = {"command_name" : "GET_SUCC_LIST", "method_params" : {}, "procedence_addr" : self.addr}, requester_object = self, asked_properties = ("succ_list",), destination_id = recv_json['return_info']['pred_id'], destination_addr = recv_json['return_info']['pred_addr'] )         
         
         if recv_json is sock_req.error_json:
             return False
@@ -146,7 +153,7 @@ class Node:
      
     #Those are auxliar methods for see some properties from the client side                
     def get_params(self):        
-        self.sock_rep.send_json({"response": "ACK", "return_info": {"finger_table" : self.finger_table, "predeccesor_addr" : self.predeccesor_addr, "predeccesor_id" : self.predeccesor_id, "succ_list" : self.succ_list } })
+        self.sock_rep.send_json({"response": "ACK", "return_info": {"finger_table" : self.finger_table, "predeccesor_addr" : self.predeccesor_addr, "predeccesor_id" : self.predeccesor_id, "succ_list" : self.succ_list, "id": self.id, "address": self.addr } })
 
     def get_prop(self, prop_name):
         if prop_name == "start_indexes":
@@ -183,17 +190,19 @@ class Node:
         countdown = time()
         rand = Random()
         rand.seed()
-        requester = request(context = self.context_sender)
+        requester = request(context = self.context_sender, verbose_option = self.verbose_option)
         choices = [i for i in range(self.m)]
         while True:
             if abs (countdown - time( ) ) > self.waiting_time:
-                if self.predeccesor_addr != self.addr:
+                if self.predeccesor_id != self.id:
                 	#Periodically, the node stabilize its information about the network,
                 	#and actuallize a finger table, that is an optmizitation for found succesors,
                 	#in a better way.
                     self.stabilize(sock_req = requester)
-                    #Independetly of the result of the stabilize, the node sends a notify message to its succesor, asking for a rectification.
-                    requester.make_request(json_to_send = {"command_name" : "RECT", "method_params" : { "predeccesor_id": self.id, "predeccesor_addr" : self.addr }, "procedence_addr" : self.addr, "procedence_method": "wrapper_loop_stabilize", "time": time()}, destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1])
+                    #Independetly of the result of the stabilize, the node sends a notify message to its succesor, asking for a rectification of the predecessor values.
+                    if requester.make_request(json_to_send = {"command_name" : "RECT", "method_params" : { "predeccesor_id": self.id, "predeccesor_addr" : self.addr }, "procedence_addr" : self.addr, "procedence_method": "wrapper_loop_stabilize", "time": time()}, destination_id = self.succ_list[0][0], destination_addr = self.succ_list[0][1]) is requester.error_json and self.verbose_option:
+                        requester.action_for_error(self.succ_list[0][1])
+
                     index = rand.choice( choices )                    
                     self.finger_table[ index ] = self.find_succesor(self.start(index), sock_req = requester)                    
                 countdown = time()
@@ -206,17 +215,20 @@ class Node:
         self.sock_rep.bind("tcp://" + self.addr)    
                 
         while True:
-            
+            if self.verbose_option:
+                print("waiting")
             
             buff = self.sock_rep.recv_json()
 
             if buff['command_name'] in self.commands:
                 
-                if buff['command_name'] == "FIND_SUCC": print(buff)
+                if self.verbose_option:
+                    print(buff)
                 if buff['command_name'] in self.commands_that_need_request:
                     self.commands[buff["command_name"]](**buff["method_params"], sock_req = client_requester)
                 else:
                     self.commands[buff["command_name"]](**buff["method_params"])
+                
             
         self.sock_rep.close()        
 
@@ -288,10 +300,22 @@ class Node:
         return (self.id, self.addr)
 
 
-
-if len(sys.argv) > 2:
-    n = Node(introduction_node = sys.argv[1], addr= sys.argv[2])
+if __name__ == "__main__":
     
-else:
-    n = Node(addr = sys.argv[1] )
+    parser = argparse.ArgumentParser(description= "This is the code of a Chord node made by DiazRock")
+    parser.add_argument('--addr_id', default = gethostbyname(gethostname()) + ":8080", help= "This is the address of the node plus an special string that identifies it in the hash space.\nIf no address is set, this automatically set the local address asigned from the local network, plus a the host name.")
+    parser.add_argument('--addr_known', default = None, help = "This is an IP address that identifies reference a node in the network.\nIf you wanna join new nodes to an existing network, you have to enter this value, otherwise your node never bee connected to the network.")
+    
+    parser.add_argument('--v', action = "store_true", help = "This is the verbose option. You can see the activity of the node if you enter it.")
+    
+    matcher = re.compile("\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d{1,6}")
+    args = parser.parse_args()
+    error_message = "The %s must have an IP:port like format first, and after that, because the code uses this info for the hash function, if you want\n to avoide colisions, you must enter an unique string. This %s is a bad input"
+    if not matcher.fullmatch(args.addr_id.split()[0]) :
+        parser.error(error_message %("addr_id", args.addr_id))
+    if args.addr_known and not matcher.fullmatch(args.addr_known.split()[0]):
+        parser.error(error_message %("addr_known", args.addr_known))
+
+
+    n = Node(addr = args.addr_id, introduction_node = args.addr_known, verbose_option = args.v)
     
