@@ -303,7 +303,7 @@ class Node:
 if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description= "This is the code of a Chord node made by DiazRock")
-    parser.add_argument('--addr_id', default = gethostbyname(gethostname()) + ":8080", help= "This is the address of the node plus an special string that identifies it in the hash space.\nIf no address is set, this automatically set the local address asigned from the local network, plus a the host name.")
+    parser.add_argument('--addr_id', default = gethostbyname(gethostname()) + ":8080", help= "This is the address of the node that identifies it in the hash space.\nIf no address is set, this automatically set the local address asigned from the local network.")
     parser.add_argument('--addr_known', default = None, help = "This is an IP address that identifies reference a node in the network.\nIf you wanna join new nodes to an existing network, you have to enter this value, otherwise your node never bee connected to the network.")
     
     parser.add_argument('--v', action = "store_true", help = "This is the verbose option. You can see the activity of the node if you enter it.")
