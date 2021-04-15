@@ -49,4 +49,9 @@ Which has the same result as the first command that I expose using docker, only 
 - Docker: 18.09.7, build 2d0083d
 - pyzmq: 16.0.3
 
+### Tutorials
+
+- [Spanish version](https://hive.blog/hive-133872/@diazrock/construyendo-chord-una-red-punto-a-punto-escalable)
+- [English version](https://hive.blog/hive-174578/@diazrock/building-chord-a-scalable-peer-to-peer-system) 
+
 And that's all. Any feedback will be appreciated.
